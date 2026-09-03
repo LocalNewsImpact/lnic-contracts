@@ -1,0 +1,33 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "lnic-contracts"
+version = "0.1.0"
+description = "Shapes written by one LNIC service and read by another."
+requires-python = ">=3.11"
+dependencies = []
+
+[project.urls]
+Source = "https://github.com/LocalNewsImpact/lnic-contracts"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+# Matches the toolchain in MizzouNewsCrawler, datadesk and NewsSourceDirectory,
+# so a contract edited from any of them is formatted the same way.
+[tool.ruff]
+line-length = 88
+target-version = "py311"
+
+[tool.black]
+line-length = 88
+
+[tool.isort]
+profile = "black"
+line_length = 88
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+addopts = "-q"
