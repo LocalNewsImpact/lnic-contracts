@@ -1,0 +1,165 @@
+# The suite's CI pattern, in one place.
+#
+# WHY THE JOBS CALL `make`
+# -----------------------
+# Every stage runs a make target, and nothing else. Not `ruff check .`,
+# not `pytest -m ...` -- `make lint`, `make test`. The commands live in
+# each repository's Makefile, which is also what a person runs on their
+# own machine, so CI and a local run cannot mean different things.
+#
+# That is the failure this exists to end. On 2026-09-04 a crawler pull
+# request failed on an integration test that could not be run locally at
+# all: an autouse fixture wrote the ORM schema into whatever DATABASE_URL
+# named, so alembic then failed, so nobody ran them, so a broken test
+# reached CI. The tests were fine. The absence of one command that meant
+# the same thing in both places was not.
+#
+# WHAT IS SHARED AND WHAT IS NOT
+# ------------------------------
+# Shared: the stages, their order, the Postgres service, the Python
+# version, and the rule that each stage is a make target.
+#
+# Not shared: what the targets do. The crawler runs its tests inside a
+# prebuilt image because its dependencies take minutes to install;
+# datadesk installs them on the runner because they take seconds. Both
+# are `make test`.
+name: Python checks
+
+on:
+  workflow_call:
+    inputs:
+      python-version:
+        required: false
+        type: string
+        default: "3.11"
+      postgres-image:
+        description: The Postgres the tests run against. Match production.
+        required: false
+        type: string
+        default: "postgres:16"
+      postgres-db:
+        required: false
+        type: string
+        default: "test"
+      typecheck:
+        description: >-
+          Run `make typecheck` as its own stage. Repositories that fold
+          mypy into `make lint` leave this off.
+        required: false
+        type: boolean
+        default: false
+      integration:
+        description: >-
+          Run `make test-integration` after the unit tests. Off where a
+          repository has none; a target that does not exist must not be
+          silently skipped.
+        required: false
+        type: boolean
+        default: false
+      install:
+        description: >-
+          How to install what the make targets need, when they do not
+          provision it themselves. Run before every stage.
+        required: false
+        type: string
+        default: "make setup"
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    name: lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ inputs.python-version }}
+          cache: pip
+      - run: ${{ inputs.install }}
+      - run: make lint
+
+  typecheck:
+    name: typecheck
+    if: inputs.typecheck
+    needs: lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ inputs.python-version }}
+          cache: pip
+      - run: ${{ inputs.install }}
+      - run: make typecheck
+
+  test:
+    name: test
+    needs: lint
+    runs-on: ubuntu-latest
+    # Production is Postgres, so the tests are. Two repositories ran on
+    # SQLite and it accepted SQL Postgres refuses: `?|` on a text column
+    # and DISTINCT over a `json` column both reached production green.
+    services:
+      postgres:
+        image: ${{ inputs.postgres-image }}
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: ${{ inputs.postgres-db }}
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      PGHOST: 127.0.0.1
+      PGPORT: "5432"
+      PGUSER: postgres
+      PGPASSWORD: postgres
+      PGDATABASE: ${{ inputs.postgres-db }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ inputs.python-version }}
+          cache: pip
+      - run: ${{ inputs.install }}
+      - run: make test
+
+  integration:
+    name: integration
+    if: inputs.integration
+    needs: test
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: ${{ inputs.postgres-image }}
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: ${{ inputs.postgres-db }}
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      PGHOST: 127.0.0.1
+      PGPORT: "5432"
+      PGUSER: postgres
+      PGPASSWORD: postgres
+      PGDATABASE: ${{ inputs.postgres-db }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ inputs.python-version }}
+          cache: pip
+      - run: ${{ inputs.install }}
+      - run: make test-integration

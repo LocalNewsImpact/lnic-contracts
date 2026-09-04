@@ -1,0 +1,89 @@
+# Does this repository follow the suite's pattern?
+#
+# The shared workflow (python-checks.yml) is only a pattern if every
+# repository uses it. A repository can quietly stop -- write its own
+# jobs, rename a target, drop the Postgres service -- and nothing would
+# say so until the difference caused a failure somewhere else.
+#
+# This is the saying-so. Called by each repository alongside the checks
+# themselves, it fails when the repository has drifted from what the
+# suite agreed:
+#
+#   - CI calls the shared workflow rather than defining its own stages
+#   - the make targets the shared workflow calls exist
+#   - a pre-push hook runs the same targets, so a red push is refused
+#     here rather than discovered in CI
+#
+# It reads files. It does not run anything the repository does.
+name: Conforms to the suite's pattern
+
+on:
+  workflow_call:
+    inputs:
+      integration:
+        description: Whether this repository declares an integration stage.
+        required: false
+        type: boolean
+        default: false
+      typecheck:
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  conforms:
+    name: conforms
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: The make targets CI calls exist
+        run: |
+          set -euo pipefail
+          missing=()
+          for target in lint test; do
+            make -n "$target" >/dev/null 2>&1 || missing+=("$target")
+          done
+          if [ "${{ inputs.typecheck }}" = "true" ]; then
+            make -n typecheck >/dev/null 2>&1 || missing+=("typecheck")
+          fi
+          if [ "${{ inputs.integration }}" = "true" ]; then
+            make -n test-integration >/dev/null 2>&1 || missing+=("test-integration")
+          fi
+          if [ ${#missing[@]} -ne 0 ]; then
+            echo "::error::missing make targets: ${missing[*]}"
+            echo "The shared workflow runs these by name. A stage whose target"
+            echo "does not exist fails in CI and cannot be run locally at all,"
+            echo "which is the gap this pattern exists to close."
+            exit 1
+          fi
+          echo "lint, test${{ inputs.typecheck && ', typecheck' || '' }}${{ inputs.integration && ', test-integration' || '' }}: all present"
+
+      - name: CI calls the shared workflow rather than its own stages
+        run: |
+          set -euo pipefail
+          if ! grep -rq "lnic-contracts/.github/workflows/python-checks.yml@" .github/workflows/; then
+            echo "::error::no workflow calls the suite's python-checks"
+            echo "Every repository runs the same stages in the same order."
+            echo "See LocalNewsImpact/lnic-contracts docs/shared-ci.md."
+            exit 1
+          fi
+          echo "calls python-checks"
+
+      - name: A pre-push hook runs the same targets
+        run: |
+          set -euo pipefail
+          if [ ! -f scripts/setup-hooks.sh ]; then
+            echo "::error::scripts/setup-hooks.sh is missing"
+            echo "CI failing is the second place to learn a repository is red."
+            echo "The first is the push, and only a hook makes that true."
+            exit 1
+          fi
+          grep -q "make" scripts/setup-hooks.sh || {
+            echo "::error::the hook does not run the make targets CI runs"
+            exit 1
+          }
+          echo "pre-push hook present, and runs make"
