@@ -8,7 +8,25 @@ They are versioned separately, in one repository, under two tag series:
 | Tag | What it versions | How a consumer pins it |
 | --- | --- | --- |
 | `v0.2.0` | the Python package | `lnic-contracts @ https://.../archive/refs/tags/v0.2.0.tar.gz` |
-| `ci-v1` | the reusable workflows | `uses: LocalNewsImpact/lnic-contracts/.github/workflows/image-build.yml@ci-v1` |
+| `ci-v1.0.0` | one iteration of the workflows, recorded | pin it where you need exactly this |
+| `ci-v1` | what consumers normally pin; follows the latest v1 | `uses: .../python-checks.yml@ci-v1` |
+
+### Two CI tags, because they do different jobs
+
+`ci-v1.2.3` never moves, so "what ran on 4 September" has an answer and a
+consumer that needs to pin exactly can. `ci-v1` follows it, so a fix
+reaches all three repositories without a pull request in each one.
+
+Either alone is worse. A moving major tag with no versions under it --
+which is what this repository had -- records nothing: `ci-v1` was moved
+by hand twice in one day and there was no way to say what it had been.
+Versions with no moving tag propagate nothing: every fix becomes a bump
+in every consumer.
+
+The safety is not that a tag cannot move. It is that the major tag only
+moves after the release's own checks pass, which is what
+`release-ci.yml` does: push `ci-v1.1.0`, it runs `make check`, and only
+then does `ci-v1` follow.
 
 Two series because the cadences differ. A workflow is edited often and
 affects nothing at runtime; the package defines a shape two services must
