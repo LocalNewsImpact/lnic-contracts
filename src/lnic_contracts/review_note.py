@@ -155,3 +155,105 @@ def into_metadata(metadata, note: dict) -> dict:
         return meta
     meta[METADATA_KEY] = note
     return meta
+
+
+# --- what a person decided, where the crawler can see it ---------------------
+#
+# A decision recorded only in the console does not reach the pipeline. The
+# crawler raises a hold from the article's own fields, so a claim a person
+# has answered is raised again the next time those fields are read -- and
+# the same question returns to the queue, from a stage that has no way to
+# know it was ever asked.
+#
+# The console's own record stays where it is: who decided, when, and why
+# belong in the application database, and the crawler has no use for them.
+# What has to travel is the smallest fact the crawler needs in order not
+# to ask again: this claim, from this stage, has an answer.
+#
+# It lives under its own key rather than inside the hold note, because the
+# hold note is dropped and rewritten every time a fresh hold is applied.
+# A decision that lived there would be erased by the next hold, which is
+# the failure this exists to prevent.
+
+#: Where decisions live inside `articles.metadata`.
+DECISIONS_KEY = "review_decided"
+
+#: What a recorded decision must carry.
+#:
+#: claim     what was answered. With `stage`, it is the question.
+#: stage     which step raised it, so the same claim from two steps stays
+#:           two questions.
+#: decision  what was decided. The crawler does not act on the verb; it
+#:           reads it back when somebody asks why an article was not held.
+#: at        when, so a decision can be aged out deliberately rather than
+#:           by accident.
+DECISION_KEYS: tuple[str, ...] = ("claim", "stage", "decision", "at")
+
+
+def question(claim: str, stage: str) -> str:
+    """The key a claim and the stage that raised it form together.
+
+    Defined here rather than in the console, because the crawler now has
+    to produce the same string in order to recognise an answered question.
+    Two implementations of "the same question" is the defect this package
+    exists to prevent.
+    """
+    return f"{claim}:{stage}"
+
+
+def build_decision(*, claim: str, stage: str, decision: str, at=None) -> dict:
+    """The record the console writes so the crawler stops asking."""
+    if not claim:
+        raise ValueError("a decision must say what claim it answered")
+    if not stage:
+        raise ValueError("a decision must say which stage raised the claim")
+    if not decision:
+        raise ValueError("a decision must say what was decided")
+    return {
+        "claim": claim,
+        "stage": stage,
+        "decision": decision,
+        "at": (at or datetime.now(timezone.utc)).isoformat(),
+    }
+
+
+def decisions(metadata) -> dict:
+    """Every decision recorded on this article, by question."""
+    if not isinstance(metadata, dict):
+        return {}
+    recorded = metadata.get(DECISIONS_KEY)
+    return recorded if isinstance(recorded, dict) else {}
+
+
+def decision_for(metadata, *, claim: str, stage: str) -> dict | None:
+    """The decision answering this claim from this stage, or None."""
+    found = decisions(metadata).get(question(claim, stage))
+    return found if isinstance(found, dict) else None
+
+
+def is_answered(metadata, *, claim: str, stage: str) -> bool:
+    """Has a person already answered this claim from this stage?
+
+    The crawler asks before holding. A claim with an answer is not raised
+    again -- the article would otherwise be held, released by a person, and
+    held again by the next run, which is a loop with a person in it.
+    """
+    return decision_for(metadata, claim=claim, stage=stage) is not None
+
+
+def record_decision(metadata, decision: dict) -> dict:
+    """Add a decision to `metadata`, replacing any answer to the same question.
+
+    Replaces rather than refuses, unlike `into_metadata`: a person may
+    revisit a question, and the newest answer is the one that holds. The
+    hold note is left alone -- releasing the article is the caller's
+    separate business.
+    """
+    missing = [key for key in DECISION_KEYS if not decision.get(key)]
+    if missing:
+        raise UnreadableNote(f"a decision is missing {', '.join(missing)}")
+    out = dict(metadata or {})
+    recorded = dict(out.get(DECISIONS_KEY) or {})
+    recorded[question(decision["claim"], decision["stage"])] = decision
+    out[DECISIONS_KEY] = recorded
+    return out

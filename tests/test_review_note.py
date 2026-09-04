@@ -140,3 +140,103 @@ def test_the_held_status_is_not_one_the_pipeline_reads():
     """Labeling reads cleaned/local, enrichment reads labeled. If
     IN_REVIEW ever became one of those, holding would stop holding."""
     assert rn.IN_REVIEW not in ("cleaned", "local", "labeled", "extracted")
+
+
+# --- a decision the crawler can see ------------------------------------------
+#
+# A decision recorded only in the console does not reach the pipeline: the
+# crawler raises a hold from the article's own fields, so a claim somebody
+# answered is raised again the next time those fields are read, and the
+# same question returns to the queue.
+
+
+def test_a_decision_carries_what_the_crawler_needs():
+    decision = rn.build_decision(
+        claim="byline_not_a_name", stage="extraction", decision="accept"
+    )
+    for key in rn.DECISION_KEYS:
+        assert decision.get(key), f"a decision without {key} cannot be read back"
+
+
+def test_a_decision_must_say_what_it_answered():
+    for missing in ("claim", "stage", "decision"):
+        kwargs = {"claim": "c", "stage": "s", "decision": "accept"}
+        kwargs[missing] = ""
+        with pytest.raises(ValueError):
+            rn.build_decision(**kwargs)
+
+
+def test_an_answered_claim_reads_as_answered():
+    meta = rn.record_decision(
+        {},
+        rn.build_decision(
+            claim="byline_not_a_name", stage="extraction", decision="accept"
+        ),
+    )
+    assert rn.is_answered(meta, claim="byline_not_a_name", stage="extraction")
+
+
+def test_the_same_claim_from_another_stage_is_unanswered():
+    """The question is the claim AND the stage that raised it."""
+    meta = rn.record_decision(
+        {},
+        rn.build_decision(
+            claim="byline_not_a_name", stage="extraction", decision="accept"
+        ),
+    )
+    assert not rn.is_answered(
+        meta, claim="byline_not_a_name", stage="labeling"
+    )
+
+
+def test_a_decision_survives_a_later_hold():
+    """The hold note is dropped and rewritten every time a fresh hold is
+    applied. A decision stored inside it would be erased by the next hold,
+    which is the loop this exists to break."""
+    meta = rn.record_decision(
+        {},
+        rn.build_decision(claim="text_not_decoded", stage="extraction", decision="accept"),
+    )
+    meta.pop(rn.METADATA_KEY, None)
+    meta = rn.into_metadata(
+        meta,
+        rn.build(claim="byline_not_a_name", status_before="labeled", stage="extraction"),
+    )
+    assert rn.is_answered(meta, claim="text_not_decoded", stage="extraction")
+    assert rn.is_readable(rn.from_metadata(meta))
+
+
+def test_revisiting_a_question_replaces_the_answer():
+    """Unlike the hold note, which refuses to overwrite: a person may
+    revisit a question, and the newest answer is the one that holds."""
+    meta = rn.record_decision(
+        {},
+        rn.build_decision(claim="c", stage="extraction", decision="accept"),
+    )
+    meta = rn.record_decision(
+        meta,
+        rn.build_decision(claim="c", stage="extraction", decision="reject"),
+    )
+    recorded = rn.decision_for(meta, claim="c", stage="extraction")
+    assert recorded["decision"] == "reject"
+    assert len(rn.decisions(meta)) == 1
+
+
+def test_an_incomplete_decision_is_refused():
+    with pytest.raises(rn.UnreadableNote):
+        rn.record_decision({}, {"claim": "c", "stage": "extraction"})
+
+
+def test_metadata_that_is_not_a_mapping_answers_nothing():
+    for value in (None, "", "review", 7, []):
+        assert rn.decisions(value) == {}
+        assert not rn.is_answered(value, claim="c", stage="extraction")
+
+
+def test_the_question_key_is_defined_once():
+    """Both repositories have to produce the same string. Two
+    implementations of "the same question" is the defect this package
+    exists to prevent."""
+    assert rn.question("byline_not_a_name", "extraction") == (
+        "byline_not_a_name:extraction"
+    )
