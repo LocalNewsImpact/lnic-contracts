@@ -1,11 +1,3 @@
-[project.optional-dependencies]
-# The tools this repository's own checks run. Named here rather than in a
-# requirements file so `pip install ".[dev]"` is the one way to get them,
-# and so a CI step cannot quietly install nothing: an unknown extra is a
-# warning to pip, and the fallback that was meant to catch it never ran.
-dev = ["pytest>=8.0", "ruff>=0.6"]
-
-
 [build-system]
 requires = ["setuptools>=68", "wheel"]
 build-backend = "setuptools.build_meta"
@@ -19,6 +11,13 @@ dependencies = []
 
 [project.urls]
 Source = "https://github.com/LocalNewsImpact/lnic-contracts"
+
+[project.optional-dependencies]
+# The tools this repository's own checks run. Named here rather than in a
+# requirements file so `pip install ".[dev]"` is the one way to get them,
+# and so a CI step cannot quietly install nothing: an unknown extra is a
+# warning to pip, and the fallback that was meant to catch it never ran.
+dev = ["pytest>=8.0", "ruff>=0.6"]
 
 [tool.setuptools.packages.find]
 where = ["src"]
