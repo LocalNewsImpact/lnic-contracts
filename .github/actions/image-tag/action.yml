@@ -1,0 +1,110 @@
+name: Image tag from contents
+description: >-
+  Compute a container image's tag from a hash of everything that goes into
+  it, and say whether an image with that tag already exists.
+
+# WHY A COMPOSITE ACTION AND NOT A WORKFLOW
+# -----------------------------------------
+# The reusable workflow that came before this built the image itself, on a
+# GitHub runner. That fits datadesk, whose images are around 300 MB, and
+# cannot fit the crawler, whose images are 1.4-10 GB built from a 6.4 GB
+# context -- which is why the crawler builds in Cloud Build.
+#
+# The part worth sharing was never the build. It is the question "does an
+# image for these exact contents already exist", and the answer has to be
+# usable by a caller that then builds however it builds.
+#
+# WHAT IT REPLACES
+# ----------------
+# The crawler decides what to rebuild from hand-written regexes over
+# changed file paths, one per service, each listing that service's source
+# directories. A path missing from one of those lists is a service that
+# silently stops being rebuilt, which has happened: `src/crawler` was
+# absent from the processor's.
+#
+# datadesk computes a hash inside its Cloud Build config. That is the
+# right idea in the wrong place -- it was missing the Dockerfile that
+# built the image, so editing the Dockerfile rebuilt nothing, and the fix
+# had to be made in a file no other repository reads.
+
+inputs:
+  image:
+    description: Image name without a tag.
+    required: true
+  dockerfile:
+    description: The Dockerfile. Always hashed.
+    required: true
+  inputs_to_hash:
+    description: >-
+      Newline-separated paths whose contents decide what is in the image.
+      Directories are hashed recursively, file lists sorted, so the hash
+      does not depend on the order the filesystem returns names in.
+      A path that does not exist fails: a typo here would silently stop
+      tracking a real input, which is the failure this replaces.
+    required: true
+  build_args:
+    description: Newline-separated NAME=VALUE build arguments. Hashed.
+    required: false
+    default: ""
+  check_exists:
+    description: >-
+      Ask the registry whether the image is already there. Requires the
+      caller to have authenticated to it first. Set false to compute the
+      tag only.
+    required: false
+    default: "true"
+
+outputs:
+  tag:
+    description: The content hash.
+    value: ${{ steps.hash.outputs.tag }}
+  image:
+    description: Full image reference, name and tag.
+    value: ${{ steps.hash.outputs.image }}
+  exists:
+    description: "true when an image with this tag is already in the registry."
+    value: ${{ steps.exists.outputs.exists }}
+
+runs:
+  using: composite
+  steps:
+    - name: Hash what goes into the image
+      id: hash
+      shell: bash
+      run: |
+        set -euo pipefail
+        {
+          echo "dockerfile:"
+          sha256sum "${{ inputs.dockerfile }}"
+          echo "build-args:"
+          printf '%s\n' "${{ inputs.build_args }}" | sed '/^$/d' | sort
+          echo "inputs:"
+          while IFS= read -r path; do
+            [ -z "$path" ] && continue
+            if [ ! -e "$path" ]; then
+              echo "::error::$path is named as an input to ${{ inputs.image }} and does not exist"
+              exit 1
+            fi
+            find "$path" -type f -print0 | sort -z | xargs -0 sha256sum
+          done <<< "${{ inputs.inputs_to_hash }}"
+        } > "${RUNNER_TEMP}/image-inputs"
+        TAG="$(sha256sum "${RUNNER_TEMP}/image-inputs" | cut -c1-12)"
+        echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+        echo "image=${{ inputs.image }}:$TAG" >> "$GITHUB_OUTPUT"
+        echo "::notice title=${{ inputs.image }}::$TAG"
+
+    - name: Is it already built?
+      id: exists
+      shell: bash
+      run: |
+        set -euo pipefail
+        if [ "${{ inputs.check_exists }}" != "true" ]; then
+          echo "exists=unknown" >> "$GITHUB_OUTPUT"
+          exit 0
+        fi
+        if docker manifest inspect "${{ steps.hash.outputs.image }}" >/dev/null 2>&1; then
+          echo "exists=true" >> "$GITHUB_OUTPUT"
+          echo "::notice::reusing ${{ steps.hash.outputs.tag }} -- contents unchanged"
+        else
+          echo "exists=false" >> "$GITHUB_OUTPUT"
+        fi
