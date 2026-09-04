@@ -114,32 +114,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Hash what goes into the image
-        id: hash
-        run: |
-          set -euo pipefail
-          {
-            echo "dockerfile:"
-            sha256sum "${{ inputs.dockerfile }}"
-            echo "build-args:"
-            printf '%s\n' "${{ inputs.build_args }}" | sed '/^$/d' | sort
-            echo "inputs:"
-            while IFS= read -r path; do
-              [ -z "$path" ] && continue
-              if [ ! -e "$path" ]; then
-                echo "::error::$path is hashed as an input to ${{ inputs.image }} and does not exist" >&2
-                exit 1
-              fi
-              # Sorted, so the hash does not depend on the order the
-              # filesystem happens to return names in.
-              find "$path" -type f -print0 | sort -z | xargs -0 sha256sum
-            done <<< "${{ inputs.inputs_to_hash }}"
-          } > /tmp/image-inputs
-          TAG="$(sha256sum /tmp/image-inputs | cut -c1-12)"
-          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
-          echo "image=${{ inputs.image }}:$TAG" >> "$GITHUB_OUTPUT"
-          echo "::notice::${{ inputs.image }}:$TAG"
-
+      # The hash and the "is it already built" question live in the
+      # composite action, so a caller that builds in Cloud Build -- which
+      # the crawler must, at 1.4-10 GB an image -- asks them the same way
+      # without using this workflow at all.
       - uses: google-github-actions/auth@v2
         with:
           workload_identity_provider: ${{ inputs.workload_identity_provider }}
@@ -149,16 +127,18 @@ jobs:
       - name: Configure Docker for Artifact Registry
         run: gcloud auth configure-docker "$(echo '${{ inputs.image }}' | cut -d/ -f1)" --quiet
 
-      - name: Does an image for these contents exist?
+      - name: What should this image be tagged?
+        id: hash
+        uses: LocalNewsImpact/lnic-contracts/.github/actions/image-tag@ci-v1
+        with:
+          image: ${{ inputs.image }}
+          dockerfile: ${{ inputs.dockerfile }}
+          inputs_to_hash: ${{ inputs.inputs_to_hash }}
+          build_args: ${{ inputs.build_args }}
+
+      - name: Decide
         id: decide
-        run: |
-          set -euo pipefail
-          if docker manifest inspect "${{ steps.hash.outputs.image }}" >/dev/null 2>&1; then
-            echo "built=false" >> "$GITHUB_OUTPUT"
-            echo "::notice::reusing ${{ steps.hash.outputs.tag }} -- contents unchanged"
-          else
-            echo "built=true" >> "$GITHUB_OUTPUT"
-          fi
+        run: echo "built=${{ steps.hash.outputs.exists == 'false' }}" >> "$GITHUB_OUTPUT"
 
       - name: Build and push
         if: steps.decide.outputs.built == 'true'

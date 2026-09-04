@@ -47,6 +47,35 @@ submit for a function that was in the version the metadata claimed.
 Removing the bad line changed nothing deployed, because the base image's
 hash did not cover the Dockerfile that built it.
 
+### Two pieces, because the builds differ
+
+`.github/actions/image-tag` answers one question: given everything that
+goes into an image, what should it be tagged, and is it already built?
+
+`.github/workflows/image-build.yml` uses that action and then builds on a
+GitHub runner.
+
+The split is not tidiness. The first version was the workflow alone, and
+it could only ever have served datadesk: its images are around 300 MB,
+while the crawler's are 1.4-10 GB built from a 6.4 GB context, which is
+why the crawler builds in Cloud Build and cannot build on a runner. The
+part worth sharing was never the build. It is the question, and the answer
+has to be usable by a caller that then builds however it builds:
+
+```yaml
+- uses: LocalNewsImpact/lnic-contracts/.github/actions/image-tag@ci-v1
+  id: base
+  with:
+    image: us-central1-docker.pkg.dev/mizzou-news-crawler/mizzou-crawler/base
+    dockerfile: Dockerfile.base
+    inputs_to_hash: requirements-base.txt
+
+- if: steps.base.outputs.exists == 'false'
+  run: |
+    gcloud builds submit --config gcp/cloudbuild/cloudbuild-base.yaml \
+      --substitutions=_TAG=${{ steps.base.outputs.tag }}
+```
+
 ### What replaces it
 
 The crawler decides what to rebuild from hand-written regexes over changed
