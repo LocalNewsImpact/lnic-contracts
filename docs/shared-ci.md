@@ -37,6 +37,47 @@ that had not changed, and "what is in 0.3.0" would stop being answerable.
 A workflow reference is a git ref, not a pip install, so pinning them
 separately costs nothing.
 
+### What a version covers, and what changes it
+
+Two series, two universes. A change outside a series' universe does not
+version it.
+
+**`vX.Y.Z` — the Python package.** `src/lnic_contracts/**` and the parts
+of `pyproject.toml` that decide what installs. The sdist carries the
+whole repository, but setuptools packages `src/` only, so a workflow
+edit changes the tarball's bytes and not one thing a consumer imports.
+
+| | The package |
+| --- | --- |
+| MAJOR | a consumer must change code to keep working: a key renamed or removed, a function gone, or the MEANING of one changed |
+| MINOR | something added that a consumer may use: a new function, a new optional key |
+| PATCH | a fix that changes nothing a consumer depends on |
+
+The important case is not the Python signature. **Renaming a key inside
+`articles.metadata` is MAJOR even when every function keeps its name**,
+because the producer and the consumer then disagree at runtime and
+articles strand held with no way to release them. That failure is the
+reason this package exists, and it does not show up as an import error.
+
+**`ci-vX.Y.Z` — the CI.** The `workflow_call` workflows
+(`python-checks.yml`, `conforms.yml`, `image-build.yml`) and
+`.github/actions/**`. Not `ci.yml` or `release-ci.yml`: those are this
+repository's own and nobody calls them.
+
+| | The CI |
+| --- | --- |
+| MAJOR | a caller must change its call, or a repository that was passing starts failing: an input renamed, removed or newly required; a job removed; **a new rule in `conforms.yml`** |
+| MINOR | a new optional input, or a job that is off by default |
+| PATCH | a fix inside a step that changes no interface |
+
+**A new conformance rule is a breaking change.** It arrives through the
+moving `ci-v1` with no pull request in any repository, and every one of
+them goes red at once for something none of them changed. New rules ship
+as `ci-v2`, and repositories move to it when they are ready to satisfy
+it.
+
+Neither series versions documentation, tests, or the README.
+
 ---
 
 ## The CI pattern
