@@ -1,0 +1,183 @@
+# Build a container image only when its contents have changed, and tag it
+# with what is in it.
+#
+# WHY THIS EXISTS
+# ---------------
+# Every image failure in this suite has had the same shape: something
+# decided what was in an image, and nothing checked that the image matched
+# it.
+#
+#   The crawler's CI image was built on 18 July and its base on 3
+#   September. Nothing rebuilds one when the other changes and nothing
+#   compares them, so CI ran for seven weeks against an image that could
+#   not hold what the commits pinned.
+#
+#   A pull request that bumped a pinned dependency was tested against an
+#   image built from the previous version of the file that declares it.
+#   It could not pass.
+#
+#   datadesk's base image installed one package twice -- once from
+#   requirements.txt and once from a Dockerfile ARG defaulting to the
+#   older version -- and the second install won. Removing the bad line
+#   changed nothing, because the base image's hash did not cover the
+#   Dockerfile that built it.
+#
+# The crawler decides what to rebuild from hand-written regexes over
+# changed file paths, one per service, each listing the source
+# directories that service uses. A path missing from one of those lists
+# is a service that silently stops being rebuilt, which has happened.
+#
+# WHAT THIS DOES INSTEAD
+# ----------------------
+# The tag IS the content. Hash everything that goes into the image --
+# its Dockerfile, its requirements, the source trees it copies, its build
+# arguments -- and use that as the tag. Then:
+#
+#   an image for this content exists   ->  nothing to do
+#   it does not                        ->  build it
+#
+# No path list to keep in step with the Dockerfile, and no way for a
+# change to be reused away. "What is deployed" is answerable by reading
+# the tag.
+name: Build an image, keyed by its contents
+
+on:
+  workflow_call:
+    inputs:
+      image:
+        description: Full image name without a tag, e.g. REGION-docker.pkg.dev/PROJECT/REPO/base
+        required: true
+        type: string
+      dockerfile:
+        description: The Dockerfile to build.
+        required: true
+        type: string
+      inputs_to_hash:
+        description: >-
+          Newline-separated paths whose contents decide what is in the
+          image. The Dockerfile is always included. Directories are
+          hashed recursively. A path that does not exist fails the build
+          rather than hashing to nothing, because a typo here would
+          silently stop tracking a real input.
+        required: true
+        type: string
+      build_args:
+        description: Newline-separated NAME=VALUE build arguments. Hashed too.
+        required: false
+        type: string
+        default: ""
+      context:
+        description: Build context directory.
+        required: false
+        type: string
+        default: "."
+      project:
+        description: GCP project for the registry.
+        required: true
+        type: string
+      workload_identity_provider:
+        required: true
+        type: string
+      service_account:
+        required: true
+        type: string
+      also_tag:
+        description: >-
+          An extra tag to move to this image, e.g. `latest`. Optional, and
+          a convenience only -- nothing should resolve an image by it.
+        required: false
+        type: string
+        default: ""
+    outputs:
+      tag:
+        description: The content hash this image is tagged with.
+        value: ${{ jobs.build.outputs.tag }}
+      image:
+        description: The full image reference, name and tag.
+        value: ${{ jobs.build.outputs.image }}
+      built:
+        description: "true if it was built, false if an image already existed."
+        value: ${{ jobs.build.outputs.built }}
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  build:
+    name: ${{ inputs.dockerfile }}
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.hash.outputs.tag }}
+      image: ${{ steps.hash.outputs.image }}
+      built: ${{ steps.decide.outputs.built }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Hash what goes into the image
+        id: hash
+        run: |
+          set -euo pipefail
+          {
+            echo "dockerfile:"
+            sha256sum "${{ inputs.dockerfile }}"
+            echo "build-args:"
+            printf '%s\n' "${{ inputs.build_args }}" | sed '/^$/d' | sort
+            echo "inputs:"
+            while IFS= read -r path; do
+              [ -z "$path" ] && continue
+              if [ ! -e "$path" ]; then
+                echo "::error::$path is hashed as an input to ${{ inputs.image }} and does not exist" >&2
+                exit 1
+              fi
+              # Sorted, so the hash does not depend on the order the
+              # filesystem happens to return names in.
+              find "$path" -type f -print0 | sort -z | xargs -0 sha256sum
+            done <<< "${{ inputs.inputs_to_hash }}"
+          } > /tmp/image-inputs
+          TAG="$(sha256sum /tmp/image-inputs | cut -c1-12)"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "image=${{ inputs.image }}:$TAG" >> "$GITHUB_OUTPUT"
+          echo "::notice::${{ inputs.image }}:$TAG"
+
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ inputs.workload_identity_provider }}
+          service_account: ${{ inputs.service_account }}
+
+      - uses: google-github-actions/setup-gcloud@v2
+      - name: Configure Docker for Artifact Registry
+        run: gcloud auth configure-docker "$(echo '${{ inputs.image }}' | cut -d/ -f1)" --quiet
+
+      - name: Does an image for these contents exist?
+        id: decide
+        run: |
+          set -euo pipefail
+          if docker manifest inspect "${{ steps.hash.outputs.image }}" >/dev/null 2>&1; then
+            echo "built=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::reusing ${{ steps.hash.outputs.tag }} -- contents unchanged"
+          else
+            echo "built=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build and push
+        if: steps.decide.outputs.built == 'true'
+        run: |
+          set -euo pipefail
+          ARGS=()
+          while IFS= read -r arg; do
+            [ -n "$arg" ] && ARGS+=(--build-arg "$arg")
+          done <<< "${{ inputs.build_args }}"
+          docker build -f "${{ inputs.dockerfile }}" \
+            "${ARGS[@]}" \
+            -t "${{ steps.hash.outputs.image }}" \
+            "${{ inputs.context }}"
+          docker push "${{ steps.hash.outputs.image }}"
+
+      - name: Move the convenience tag
+        if: inputs.also_tag != ''
+        run: |
+          set -euo pipefail
+          gcloud artifacts docker tags add \
+            "${{ steps.hash.outputs.image }}" \
+            "${{ inputs.image }}:${{ inputs.also_tag }}"
