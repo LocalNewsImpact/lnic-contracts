@@ -26,7 +26,7 @@ every consumer, which is the conversation a silent rename skipped.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 #: The status a held article carries. Selected by no pipeline stage:
 #: labeling reads `cleaned`/`local`, enrichment reads `labeled`.
@@ -74,7 +74,7 @@ def build(*, claim: str, status_before: str, stage: str, held_at=None) -> dict:
         )
     if not str(stage).strip():
         raise ValueError("a hold needs the stage that raised it")
-    when = held_at or datetime.now(timezone.utc)
+    when = held_at or datetime.now(UTC)
     return {
         "status_before": str(status_before).strip(),
         "claim": str(claim).strip(),
@@ -213,7 +213,7 @@ def build_decision(*, claim: str, stage: str, decision: str, at=None) -> dict:
         "claim": claim,
         "stage": stage,
         "decision": decision,
-        "at": (at or datetime.now(timezone.utc)).isoformat(),
+        "at": (at or datetime.now(UTC)).isoformat(),
     }
 
 

@@ -8,7 +8,7 @@ with the status it was held from gone.
 These tests are the ones neither side could write alone.
 """
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
 
@@ -86,7 +86,7 @@ def test_a_hold_without_all_three_facts_is_refused(kwargs):
 
 
 def test_a_supplied_timestamp_is_used():
-    when = datetime(2026, 9, 3, 12, 0, tzinfo=timezone.utc)
+    when = datetime(2026, 9, 3, 12, 0, tzinfo=UTC)
     assert rn.build(
         claim="c", status_before="labeled", stage="s", held_at=when
     )["held_at"] == when.isoformat()
