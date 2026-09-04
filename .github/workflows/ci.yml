@@ -1,8 +1,14 @@
 # This repository's own checks.
 #
 # It had none. Two applications import it, a rename here breaks both, and
-# v0.2.0 was released from a laptop with nothing but a local pytest run
-# behind it.
+# v0.2.0 was released from a laptop with nothing behind it but a local
+# pytest run -- then the first two commits with CI attached went to main
+# red, on things ruff names in under a second, because there was still no
+# way to run ruff here.
+#
+# One target, `make check`, run by CI and by the pre-push hook
+# (scripts/setup-hooks.sh). They cannot drift: if the hook passes, the
+# push passes.
 name: CI
 
 on:
@@ -11,61 +17,16 @@ on:
   pull_request:
 
 jobs:
-  checks:
-    name: Checks
+  check:
+    name: make check
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-      # An unknown extra is a warning to pip, not an error, so a
-      # fallback behind `||` never ran and ruff was simply absent --
-      # exit 127, reported as a failed lint rather than a missing tool.
-      - run: pip install -e ".[dev]"
-      - name: ruff
-        run: ruff check .
-      - name: pytest
-        run: python -m pytest -q
-
-  # The package has to install from the URL consumers actually use, not
-  # only from the working tree. datadesk's image reported version 0.2.0
-  # and carried v0.1.0's code, and no test anywhere installed the tarball
-  # to notice.
-  installs-from-its-own-tag:
-    name: Installs the way consumers install it
-    runs-on: ubuntu-latest
-    if: github.event_name == 'push'
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-      - name: Build the sdist and install it
-        run: |
-          pip install build
-          python -m build --sdist
-          pip install dist/*.tar.gz
-      - name: What is installed is what is in the tree
-        run: |
-          cd /tmp
-          python - <<'PY'
-          import importlib.metadata as meta
-          import inspect
-          from lnic_contracts import review_note
-
-          print("installed version:", meta.version("lnic-contracts"))
-          # Every public name the module declares has to survive packaging.
-          # A stale build directory or a src-layout mistake produces a
-          # package with the new version number and the old code, which is
-          # exactly what reached production on 4 September.
-          missing = [
-              name
-              for name in ("build", "read", "question", "build_decision",
-                           "record_decision", "is_answered")
-              if not hasattr(review_note, name)
-          ]
-          if missing:
-              raise SystemExit(f"packaged without: {', '.join(missing)}")
-          print("public API present:", len(dict(inspect.getmembers(review_note))))
-          PY
+      # `make check` is lint, tests, and the packaging check: the built
+      # package has to carry the code and not only the version number.
+      # datadesk's image reported 0.2.0 and carried v0.1.0's code, and
+      # nothing installed the built package to notice.
+      - run: make check
