@@ -21,6 +21,78 @@ separately costs nothing.
 
 ---
 
+## The CI pattern
+
+`python-checks.yml` runs the suite's stages, in order, with a Postgres
+service:
+
+    lint  ->  typecheck  ->  test  ->  integration
+
+`conforms.yml` fails a repository that has drifted from it.
+
+### Every stage is a make target
+
+Not `ruff check .`, not `pytest -m ...`. `make lint`, `make test`. The
+commands live in each repository's Makefile, which is also what a person
+runs on their own machine, **so CI and a local run cannot mean different
+things**.
+
+That is the failure this exists to end. On 4 September a crawler pull
+request failed on an integration test that could not be run locally at
+all: an autouse fixture wrote the ORM schema into whatever DATABASE_URL
+named, alembic then failed, so nobody ran them, so a broken test reached
+CI. The tests were fine. What was missing was one command that meant the
+same thing in both places.
+
+### What is shared, and what is not
+
+Shared: the stages, their order, the Postgres service, the Python
+version, and the rule that a stage is a make target.
+
+Not shared: what the targets do. The crawler runs its tests inside a
+prebuilt image because its dependencies take minutes to install;
+datadesk installs them on the runner because they take seconds. Both are
+`make test`.
+
+### Adopting it
+
+```yaml
+name: CI
+on: [push, pull_request]
+
+jobs:
+  checks:
+    uses: LocalNewsImpact/lnic-contracts/.github/workflows/python-checks.yml@ci-v1
+    with:
+      integration: true
+  conforms:
+    uses: LocalNewsImpact/lnic-contracts/.github/workflows/conforms.yml@ci-v1
+    with:
+      integration: true
+```
+
+The repository provides `make lint`, `make test`, and — where it declares
+them — `make typecheck` and `make test-integration`, plus
+`scripts/setup-hooks.sh` so a red push is refused before CI sees it.
+
+### Authentication is the same everywhere
+
+Every repository exposes two variables, so a shared workflow names them
+without knowing which project it is in:
+
+| | |
+| --- | --- |
+| `vars.WIF_PROVIDER` | the workload identity provider |
+| `vars.DEPLOY_SERVICE_ACCOUNT` | the account to impersonate |
+
+They were three different things -- a service-account JSON key in one
+repository, a variable in another, a provider path hardcoded in a
+workflow file in the third -- which is why a shared workflow could not
+name a secret. Normalised on 4 September; the crawler's project had no
+GitHub identity pool at all until then.
+
+---
+
 ## Why the image workflow exists
 
 Every image failure in this suite has had one shape: something decided
