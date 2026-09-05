@@ -56,6 +56,20 @@ on:
         required: false
         type: boolean
         default: false
+      fetch-tags:
+        description: >-
+          Check out the repository's tags as well as its files.
+
+          Off by default because most stages do not need them and a tag
+          fetch is not free. On where a repository TESTS something about
+          its tags: the Source Directory asserts that the version in
+          pyproject is not one already released, and with the default
+          shallow checkout that test found no tags, returned early and
+          passed -- so main sat in exactly the state the test exists to
+          prevent, green, for as long as nobody ran it locally.
+        required: false
+        type: boolean
+        default: false
       install:
         description: >-
           How to install what the make targets need, when they do not
@@ -73,6 +87,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-tags: ${{ inputs.fetch-tags }}
+          # `fetch-tags` needs history to hang the tags on; 0 is the
+          # documented pairing. Kept at the default depth otherwise, so a
+          # repository that does not ask for tags pays nothing.
+          fetch-depth: ${{ inputs.fetch-tags && 0 || 1 }}
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ inputs.python-version }}
@@ -87,6 +107,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-tags: ${{ inputs.fetch-tags }}
+          # `fetch-tags` needs history to hang the tags on; 0 is the
+          # documented pairing. Kept at the default depth otherwise, so a
+          # repository that does not ask for tags pays nothing.
+          fetch-depth: ${{ inputs.fetch-tags && 0 || 1 }}
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ inputs.python-version }}
@@ -123,6 +149,12 @@ jobs:
       PGDATABASE: ${{ inputs.postgres-db }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-tags: ${{ inputs.fetch-tags }}
+          # `fetch-tags` needs history to hang the tags on; 0 is the
+          # documented pairing. Kept at the default depth otherwise, so a
+          # repository that does not ask for tags pays nothing.
+          fetch-depth: ${{ inputs.fetch-tags && 0 || 1 }}
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ inputs.python-version }}
@@ -157,6 +189,12 @@ jobs:
       PGDATABASE: ${{ inputs.postgres-db }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-tags: ${{ inputs.fetch-tags }}
+          # `fetch-tags` needs history to hang the tags on; 0 is the
+          # documented pairing. Kept at the default depth otherwise, so a
+          # repository that does not ask for tags pays nothing.
+          fetch-depth: ${{ inputs.fetch-tags && 0 || 1 }}
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ inputs.python-version }}
