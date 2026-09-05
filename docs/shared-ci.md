@@ -134,6 +134,32 @@ The repository provides `make lint`, `make test`, and — where it declares
 them — `make typecheck` and `make test-integration`, plus
 `scripts/setup-hooks.sh` so a red push is refused before CI sees it.
 
+### `fetch-tags`, for a repository that tests its own tags
+
+Off by default: a tag fetch is not free and most stages have no use for
+one. Turn it on where the suite is checked against them.
+
+The Source Directory is the case that produced it. It asserts that the
+version in `pyproject.toml` is not one already released — a merge into a
+version that is tagged cannot be released, and main should never sit in
+that state. Under the default shallow checkout the test found no tags at
+all, took its "no tags, nothing to check" path, and passed. Main was
+green while sitting in exactly the state the test exists to prevent, and
+only a local run ever said so.
+
+Two halves, and both are needed. CI has to be able to see the tags:
+
+```yaml
+    with:
+      fetch-tags: true
+```
+
+And the test must not be able to pass by finding nothing. A check that
+returns early when its input is missing is not a check; where the input
+is guaranteed — CI, with `fetch-tags` on — absence is a failure of the
+setup and should be reported as one, not skipped. Otherwise the flag can
+be dropped later and everything stays green.
+
 ### Authentication is the same everywhere
 
 Every repository exposes two variables, so a shared workflow names them
