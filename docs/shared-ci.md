@@ -364,6 +364,40 @@ GitHub identity pool at all until then.
 
 ---
 
+## How main is protected
+
+Every repository in the suite carries the same branch ruleset on its
+default branch, named "Main Branch CI Protections":
+
+| Rule | What it does |
+| --- | --- |
+| `pull_request` | a change reaches main through a pull request, never a push |
+| `required_status_checks` | that pull request is green first; the contexts are the repository's own |
+| `non_fast_forward` | no force-push over main |
+| `deletion` | main cannot be deleted |
+
+The rules the suite works to:
+
+1. Nothing is pushed to origin except on a branch.
+2. Every repository has a pre-push hook that runs `make check` before a
+   push, so what CI will say is known before it is said.
+3. CI checks the pull request, and green is what allows a merge.
+4. An administrator may merge without a code review.
+5. Nobody pushes to main, administrators included.
+
+Four and five are in tension, and GitHub resolves them through the
+ruleset's bypass list. A bypass actor is exempt from the *ruleset*, not
+from a rule within it: the modes are `always` (exempt when pushing and
+when merging) and `pull_request` (exempt only through a pull request).
+There is no "exempt from the review requirement but not from the push
+restriction".
+
+`delete_branch_on_merge` is on in every repository. It was off in
+datadesk and here, which is how datadesk reached 227 branches, 221 of
+them merged, against the crawler's 12.
+
+---
+
 ## Why the image workflow exists
 
 Every image failure in this suite has had one shape: something decided
