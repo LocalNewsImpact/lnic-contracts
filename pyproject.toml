@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "lnic-contracts"
-version = "0.2.0"
+version = "0.3.0"
 description = "Shapes written by one LNIC service and read by another."
 requires-python = ">=3.11"
 dependencies = []
@@ -17,7 +17,7 @@ Source = "https://github.com/LocalNewsImpact/lnic-contracts"
 # requirements file so `pip install ".[dev]"` is the one way to get them,
 # and so a CI step cannot quietly install nothing: an unknown extra is a
 # warning to pip, and the fallback that was meant to catch it never ran.
-dev = ["pytest>=8.0", "ruff>=0.6"]
+dev = ["pytest>=8.0", "pytest-cov>=5.0", "ruff>=0.6"]
 
 [tool.setuptools.packages.find]
 where = ["src"]
@@ -38,3 +38,12 @@ line_length = 88
 [tool.pytest.ini_options]
 pythonpath = ["src"]
 addopts = "-q"
+
+# What `make test` measures. No fail_under here: the floor is
+# lnic_contracts.coverage_floor, the same file every consumer runs, and
+# conforms.yml refuses a second number in any repository, this one included.
+[tool.coverage.run]
+source = ["lnic_contracts"]
+
+[tool.coverage.report]
+show_missing = true

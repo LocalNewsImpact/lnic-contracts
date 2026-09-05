@@ -17,7 +17,8 @@
 # WHAT IS SHARED AND WHAT IS NOT
 # ------------------------------
 # Shared: the stages, their order, the Postgres service, the Python
-# version, and the rule that each stage is a make target.
+# version, the coverage floor, and the rule that each stage is a make
+# target.
 #
 # Not shared: what the targets do. The crawler runs its tests inside a
 # prebuilt image because its dependencies take minutes to install;
@@ -199,6 +200,28 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       - run: make test
+
+      # The suite's coverage floor, from this workflow's own commit. It is
+      # the file every repository's `make test` runs locally
+      # (lnic_contracts.coverage_floor), taken here from the commit the
+      # caller's `@ci-vN` resolved to rather than from whatever version of
+      # the package the repository installed, so the number CI enforces is
+      # the one this tag ships. A repository sets no floor of its own;
+      # conforms.yml refuses one.
+      - uses: actions/checkout@v4
+        with:
+          repository: LocalNewsImpact/lnic-contracts
+          ref: ${{ github.job_workflow_sha }}
+          path: .lnic-contracts
+          sparse-checkout: src/lnic_contracts
+      - name: coverage floor
+        run: |
+          set -euo pipefail
+          if git ls-files --error-unmatch coverage.xml >/dev/null 2>&1; then
+            echo "::error::coverage.xml is tracked, so the floor would read a stale report"
+            exit 1
+          fi
+          python .lnic-contracts/src/lnic_contracts/coverage_floor.py coverage.xml
 
   integration:
     name: integration
