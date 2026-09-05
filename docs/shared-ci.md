@@ -96,7 +96,18 @@ service:
 
     lint  ->  typecheck  ->  test  ->  integration
 
-`conforms.yml` fails a repository that has drifted from it.
+`conforms.yml` fails a repository that has drifted from it. It reads
+files and runs nothing the repository defines:
+
+| It fails when | Why |
+| --- | --- |
+| CI does not call `python-checks.yml` | the stages would be this repository's own again |
+| a make target the shared workflow calls is missing | the stage fails in CI and cannot be run locally at all |
+| `scripts/setup-hooks.sh` is absent, or does not run make | CI becomes the first place a red commit is noticed |
+| the hook does not recognise a branch deletion | `git push --delete` runs every stage to push nothing |
+| CI's push trigger is not scoped to a branch list | a pull request push runs the whole suite twice |
+| the repository sets a coverage floor of its own | two numbers, and whichever runs last wins |
+| `make test` does not run the suite's floor | the hook stops refusing what CI would |
 
 ### Every stage is a make target
 
@@ -366,16 +377,6 @@ GitHub identity pool at all until then.
 
 ## How main is protected
 
-Every repository in the suite carries the same branch ruleset on its
-default branch, named "Main Branch CI Protections":
-
-| Rule | What it does |
-| --- | --- |
-| `pull_request` | a change reaches main through a pull request, never a push |
-| `required_status_checks` | that pull request is green first; the contexts are the repository's own |
-| `non_fast_forward` | no force-push over main |
-| `deletion` | main cannot be deleted |
-
 The rules the suite works to:
 
 1. Nothing is pushed to origin except on a branch.
@@ -385,12 +386,43 @@ The rules the suite works to:
 4. An administrator may merge without a code review.
 5. Nobody pushes to main, administrators included.
 
-Four and five are in tension, and GitHub resolves them through the
-ruleset's bypass list. A bypass actor is exempt from the *ruleset*, not
-from a rule within it: the modes are `always` (exempt when pushing and
-when merging) and `pull_request` (exempt only through a pull request).
-There is no "exempt from the review requirement but not from the push
-restriction".
+### Where each rule lives
+
+**One organization ruleset**, `Main is reached by pull request`, targets
+`~ALL` repositories' default branch and carries `pull_request` (one
+approval, code-owner review), `non_fast_forward` and `deletion`. Rules 1,
+4 and 5 change there, once, for every repository including ones created
+later.
+
+**Each repository's own ruleset** carries `required_status_checks` and
+nothing else. That rule cannot move up: the contexts differ per
+repository -- `checks / integration` exists only in the crawler, `Data
+quality` only in the Source Directory -- and a context named in a
+ruleset but never reported blocks every pull request permanently.
+
+### How four and five hold together
+
+They look contradictory: an administrator may bypass the review, and
+nobody may push to main. The ruleset's bypass list resolves it, and the
+mode is what matters.
+
+| Bypass mode | Direct push to main | Merge a pull request against the rules |
+| --- | --- | --- |
+| `always` | allowed | allowed |
+| `pull_request` | **refused** | allowed, with `--admin` |
+
+`pull_request` is the mode in use. Measured on 2026-09-05 against
+lnic-contracts#13, with one approval required and no review given:
+
+    gh pr merge 13 --squash            refused: "the base branch policy
+                                       prohibits the merge"
+    gh pr merge 13 --squash --admin    merged
+
+The GraphQL field `viewerCanMergeAsAdmin` reported `false` for that same
+pull request, and the merge succeeded anyway. It describes the legacy
+branch-protection override, not a ruleset bypass, so it is not the field
+to read -- and reading it instead of attempting the merge produced two
+wrong configurations before the third was tested.
 
 `delete_branch_on_merge` is on in every repository. It was off in
 datadesk and here, which is how datadesk reached 227 branches, 221 of
