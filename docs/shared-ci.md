@@ -243,11 +243,46 @@ jobs:
     uses: LocalNewsImpact/lnic-contracts/.github/workflows/python-checks.yml@ci-v1
     with:
       install: make ci-image
+      pip-cache: false   # nothing on the runner writes ~/.cache/pip
 ```
 
 A stage command must be the same string whether it runs on a developer's
 virtualenv or inside the image; only the wrapper around it may differ.
 That is what makes `make test` one definition rather than two.
+
+### A pip cache a stage never writes
+
+`pip-cache` is on by default and belongs off wherever `install` does not
+pip-install on the runner. `setup-python`'s post-step saves
+`~/.cache/pip`; a repository whose stages run inside an image never
+creates it, and the save fails the job -- after lint or the tests
+reported success -- with:
+
+    Cache folder path is retrieved for pip but doesn't exist on disk
+
+Only on a cache MISS. A hit restores the directory, so the save finds
+it there and the job is green, which is why the crawler ran this way for
+weeks without noticing.
+
+What ended that on 5 September was the 10 GB per-repository cache limit,
+and the way it ended is worth reading twice. The crawler has one
+workflow that does pip-install on the runner, so `main` carried a 2.9 GB
+pip cache. These jobs restored it by prefix -- and because a Dependabot
+pull request changes a requirements file, and with it the cache key,
+each one then SAVED all 2.9 GB back under its own key, having installed
+nothing. Four of them was 11.5 GB against a 10 GB budget. `main`'s
+entry, the one every run restores from, was evicted; the jobs after
+that missed entirely, found no directory to save, and went red. The
+tests had passed in every one.
+
+So the cache these jobs never wrote was not merely useless. It was
+copying a cache it did not own, once per pull request, until the
+original was gone.
+
+Two lessons, and the second is the general one: a cache that is only
+ever restored and never written is a failure waiting for an eviction,
+and a step that runs after the work should not be able to fail the
+work.
 
 ### `fetch-tags`, for a repository that tests its own tags
 
