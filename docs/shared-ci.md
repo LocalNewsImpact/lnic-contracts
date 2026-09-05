@@ -134,6 +134,42 @@ The repository provides `make lint`, `make test`, and — where it declares
 them — `make typecheck` and `make test-integration`, plus
 `scripts/setup-hooks.sh` so a red push is refused before CI sees it.
 
+### Stages that run inside an image
+
+The `install` input is how a repository provides what its targets need
+before each stage runs. datadesk and the Source Directory pass
+`make .venv`; the crawler passes `make ci-image`, which logs in to GHCR
+and pulls the image its targets then `docker run`. Two things make that
+possible, and both are easy to remove by accident:
+
+- The install step runs with `GITHUB_TOKEN` in its environment. The
+  token is otherwise not an environment variable at all, and the
+  string a caller passes cannot reference secrets.
+- `python-checks.yml` declares no `permissions` of its own, so its jobs
+  run with whatever the caller granted. A called workflow can only
+  narrow its caller's grant, so a `contents: read` block here would be a
+  ceiling under which a private-image pull -- `packages: read` -- can
+  never fit, and the failure ("requesting packages: read, but is only
+  allowed packages: none") would point at the wrong repository.
+
+The caller says what it needs:
+
+```yaml
+permissions:
+  contents: read
+  packages: read   # the CI image is a private package on GHCR
+
+jobs:
+  checks:
+    uses: LocalNewsImpact/lnic-contracts/.github/workflows/python-checks.yml@ci-v1
+    with:
+      install: make ci-image
+```
+
+A stage command must be the same string whether it runs on a developer's
+virtualenv or inside the image; only the wrapper around it may differ.
+That is what makes `make test` one definition rather than two.
+
 ### `fetch-tags`, for a repository that tests its own tags
 
 Off by default: a tag fetch is not free and most stages have no use for
@@ -331,7 +367,8 @@ tags make a mirror easier to reason about -- a tag that is not there fails
 loudly instead of pulling something older -- but the mirror itself stays
 where it is used.
 
-**Adoption.** No repository calls these workflows yet. The plan is
-`MizzouNewsCrawler/docs/BUILD_AND_CI_ARCHITECTURE.md`, which sequences it:
+**Adoption.** datadesk, the Source Directory and the crawler all call
+`python-checks.yml` and `conforms.yml` as of 5 September 2026. The plan
+that sequenced it is `MizzouNewsCrawler/docs/BUILD_AND_CI_ARCHITECTURE.md`:
 hash-keyed images first, then the base image's contents, then the
 requirements files, then the shared workflows, then the enrichment split.
