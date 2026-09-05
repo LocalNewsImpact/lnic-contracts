@@ -33,8 +33,12 @@ fmt: $(VENV) ## Apply what ruff can fix
 	$(VENV)/bin/ruff check --fix .
 
 .PHONY: test
-test: $(VENV) ## The test suite
-	$(PY) -m pytest -q
+test: $(VENV) ## The test suite, against the suite's coverage floor
+# The floor this repository ships is the floor it is held to. Measured
+# the way every consumer measures: pytest-cov writes coverage.xml, and
+# lnic_contracts.coverage_floor reads it. No fail_under anywhere else.
+	$(PY) -m pytest --cov --cov-report=xml --cov-report=term
+	$(PY) -m lnic_contracts.coverage_floor coverage.xml
 
 .PHONY: packaged
 packaged: $(VENV) ## Does the built package carry the code? (CI runs this)
@@ -56,7 +60,7 @@ check: lint test packaged ## Everything CI runs -- run before pushing
 
 .PHONY: clean
 clean:
-	rm -rf $(VENV) .packagecheck build dist .pytest_cache .ruff_cache
+	rm -rf $(VENV) .packagecheck build dist .pytest_cache .ruff_cache .coverage coverage.xml
 	find . -name __pycache__ -type d -prune -exec rm -rf {} +
 
 .PHONY: help

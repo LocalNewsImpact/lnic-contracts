@@ -41,6 +41,13 @@ def main() -> int:
 
     version = metadata.version("lnic-contracts")
     missing = [name for name in PUBLIC if not hasattr(review_note, name)]
+
+    # Every repository's `make test` runs this module from the installed
+    # package. Dropped from the sdist, it would fail all three at once.
+    from lnic_contracts import coverage_floor
+
+    if not callable(getattr(coverage_floor, "main", None)):
+        missing.append("coverage_floor.main")
     if missing:
         print(
             f"lnic-contracts {version} packaged without: {', '.join(missing)}",

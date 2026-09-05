@@ -10,6 +10,12 @@ a handover with a shape.
     review_note   the crawler tells the review console it has held an
                   article, and what to restore if the hold is lifted
 
+One thing here is not a shape: coverage_floor, the suite's 80 percent,
+which every repository's `make test` and the shared CI workflow both
+run. It lives in the package because that is what every repository
+already installs, and a rule each repository restates is a rule that
+drifts.
+
 A shape belongs here when it crosses a service boundary. A shape with one
 consumer is a module and belongs in that service.
 """

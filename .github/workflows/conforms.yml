@@ -13,6 +13,8 @@
 #   - the make targets the shared workflow calls exist
 #   - a pre-push hook runs the same targets, so a red push is refused
 #     here rather than discovered in CI
+#   - the coverage floor is the suite's (lnic_contracts.coverage_floor),
+#     run by `make test`, and the repository does not carry one of its own
 #
 # It reads files. It does not run anything the repository does.
 name: Conforms to the suite's pattern
@@ -87,3 +89,42 @@ jobs:
             exit 1
           }
           echo "pre-push hook present, and runs make"
+
+      - name: The coverage floor is the suite's, not the repository's
+        run: |
+          set -euo pipefail
+          # One number, in lnic_contracts.coverage_floor. Three repositories
+          # each carried their own and all three said 78 against a rule of
+          # 80; a second number here is the drift this exists to end, and
+          # whichever of the two runs last is the one that wins.
+          # A setting, not a mention: `fail_under =` in a config, or the
+          # pytest-cov flag, and not on a comment line.
+          own=$(grep -rnE '^[^#]*(fail_under[[:space:]]*=|--cov-fail-under)' . \
+                --include=pytest.ini --include=pyproject.toml --include=setup.cfg \
+                --include=.coveragerc --include=tox.ini --include=Makefile \
+                --include='*.mk' --include='*.sh' \
+                --exclude-dir=.git --exclude-dir=.venv --exclude-dir=node_modules \
+                || true)
+          if [ -n "$own" ]; then
+            echo "::error::this repository sets a coverage floor of its own"
+            echo "$own"
+            echo "The floor is lnic_contracts.coverage_floor, run by make test."
+            echo "Remove this one; to change the floor, change it there, for every repository."
+            exit 1
+          fi
+          echo "no repository-local coverage floor"
+
+      - name: make test runs the suite's floor
+        run: |
+          set -euo pipefail
+          # The other half of the rule: CI runs the floor after `make test`
+          # (python-checks.yml), and `make test` runs it too, so the hook
+          # refuses what CI would. Read from the Makefile and the scripts
+          # it calls, since a stage may be a script.
+          if ! grep -rqE 'lnic_contracts\.coverage_floor|lnic-coverage-floor' Makefile scripts 2>/dev/null; then
+            echo "::error::make test does not run the suite's coverage floor"
+            echo "After pytest --cov --cov-report=xml, run:"
+            echo "    python -m lnic_contracts.coverage_floor coverage.xml"
+            exit 1
+          fi
+          echo "make test runs lnic_contracts.coverage_floor"

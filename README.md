@@ -46,6 +46,12 @@ crawler owns that and datadesk mirrors it — and not application logic.
 Just the agreed shape of something handed over, and the smallest code
 needed to build and read it correctly.
 
+One thing here is not a shape: `coverage_floor`, the suite's 80 percent,
+which every repository's `make test` and the shared CI workflow both run.
+It lives in the package because that is what every repository already
+installs, and a rule each repository restates is a rule that drifts.
+The workflows themselves are in `docs/shared-ci.md`.
+
 ## What does not
 
 Anything only one service uses. A contract with one consumer is a module,

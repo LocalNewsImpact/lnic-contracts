@@ -70,11 +70,20 @@ repository's own and nobody calls them.
 | MINOR | a new optional input, or a job that is off by default |
 | PATCH | a fix inside a step that changes no interface |
 
-**A new conformance rule is a breaking change.** It arrives through the
-moving `ci-v1` with no pull request in any repository, and every one of
-them goes red at once for something none of them changed. New rules ship
-as `ci-v2`, and repositories move to it when they are ready to satisfy
-it.
+**A new rule is breaking when a repository that passes would fail.** A
+rule arrives through the moving `ci-v1` with no pull request in any
+repository, so a repository that does not satisfy it goes red for
+something it did not change. Two ways to ship one:
+
+- **Land it in every repository first, move the tag last.** Each
+  repository's pull request is green under the current tag; when the
+  tag moves, nothing that was passing starts failing, and the release is
+  MINOR. This is how the coverage floor shipped (`ci-v1.4.0`).
+- **`ci-v2`**, when the first is not possible -- a rule some repository
+  cannot yet satisfy -- and repositories move to it when they are ready.
+
+What is never done: moving `ci-v1` onto a rule a consumer is known to
+fail. The three pull requests it breaks include the one that would fix it.
 
 Neither series versions documentation, tests, or the README.
 
@@ -106,12 +115,71 @@ same thing in both places.
 ### What is shared, and what is not
 
 Shared: the stages, their order, the Postgres service, the Python
-version, and the rule that a stage is a make target.
+version, the coverage floor, and the rule that a stage is a make target.
 
 Not shared: what the targets do. The crawler runs its tests inside a
 prebuilt image because its dependencies take minutes to install;
 datadesk installs them on the runner because they take seconds. Both are
 `make test`.
+
+### The coverage floor is one number, here
+
+Eighty percent of lines, across the suite. It is `FLOOR` in
+`lnic_contracts.coverage_floor`, and nowhere else.
+
+It was in four places and none of them said 80: the crawler said 78 in
+two files, the Source Directory 78 in one, datadesk and this repository
+nothing at all. Each was green against itself, so nothing said the suite
+had drifted from its own rule. A number restated per repository is a
+number per repository.
+
+Two things run the same file:
+
+- **`make test`**, in every repository, after pytest writes the report:
+
+      pytest --cov --cov-report=xml
+      python -m lnic_contracts.coverage_floor coverage.xml
+
+  so the pre-push hook refuses what CI would.
+
+- **`python-checks.yml`**, after `make test`, from the commit the
+  caller's `@ci-vN` resolved to (`github.job_workflow_sha`) -- not from
+  whatever version of the package the repository installed, so the
+  number CI enforces is the one the tag ships.
+
+`conforms.yml` refuses a repository that carries a `fail_under` or
+`--cov-fail-under` of its own, and one whose `make test` does not run the
+floor. To change the floor, change `FLOOR`, and every repository moves
+together. It only goes up.
+
+The comparison is exact: 79.96% is under 80%. coverage.py's own
+`fail_under` rounds the total to its `precision` first (0 by default), so
+79.5% passes an 80 there. A report that measured no lines is not a pass
+either -- `--cov` pointed at a package that does not exist reports a rate
+of 1.0, and the floor calls that not measured.
+
+What counts as covered is still each repository's: `[tool.coverage.run]
+source` and `omit` say what the code is (migrations and tests are not).
+The floor says how much of it a test must reach.
+
+### Local databases do not share ports
+
+Each repository's compose Postgres publishes on a port of its own, because
+Docker Desktop does not fail a bind that is already taken: the container
+comes up, `compose up --wait` reports it healthy (the health check runs
+inside), and the repository's tests connect to whatever is listening on
+that port -- another repository's database. datadesk's suite ran against
+the Source Directory's database on 5434 for as long as both were up, and
+the only symptom was an authentication error.
+
+| Port | Repository | Container |
+| --- | --- | --- |
+| 5432 | MizzouNewsCrawler | `mizzou-postgres` |
+| 5434 | NewsSourceDirectory | `nsd-postgres` |
+| 5435 | datadesk | `datadesk-test-postgres` |
+
+A target that starts one should also check the port it got, not the
+port it asked for.
 
 ### Adopting it
 
@@ -133,6 +201,9 @@ jobs:
 The repository provides `make lint`, `make test`, and — where it declares
 them — `make typecheck` and `make test-integration`, plus
 `scripts/setup-hooks.sh` so a red push is refused before CI sees it.
+`make test` writes `coverage.xml` and runs the suite's floor on it; the
+repository has `lnic-contracts` installed, as a dev dependency if nothing
+else imports it.
 
 ### Stages that run inside an image
 
