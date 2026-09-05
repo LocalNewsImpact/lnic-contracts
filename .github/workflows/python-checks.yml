@@ -92,7 +92,13 @@ jobs:
           # `fetch-tags` needs history to hang the tags on; 0 is the
           # documented pairing. Kept at the default depth otherwise, so a
           # repository that does not ask for tags pays nothing.
-          fetch-depth: ${{ inputs.fetch-tags && 0 || 1 }}
+          #
+          # QUOTED, and it matters. GitHub expressions treat the number 0
+          # as falsy, so `x && 0 || 1` evaluates to 1 whatever x is: the
+          # checkout stayed shallow, no tags arrived, and `fetch-tags:
+          # true` did nothing at all. '0' is a non-empty string and
+          # therefore truthy, so the branch survives.
+          fetch-depth: ${{ inputs.fetch-tags && '0' || '1' }}
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ inputs.python-version }}
@@ -112,7 +118,13 @@ jobs:
           # `fetch-tags` needs history to hang the tags on; 0 is the
           # documented pairing. Kept at the default depth otherwise, so a
           # repository that does not ask for tags pays nothing.
-          fetch-depth: ${{ inputs.fetch-tags && 0 || 1 }}
+          #
+          # QUOTED, and it matters. GitHub expressions treat the number 0
+          # as falsy, so `x && 0 || 1` evaluates to 1 whatever x is: the
+          # checkout stayed shallow, no tags arrived, and `fetch-tags:
+          # true` did nothing at all. '0' is a non-empty string and
+          # therefore truthy, so the branch survives.
+          fetch-depth: ${{ inputs.fetch-tags && '0' || '1' }}
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ inputs.python-version }}
@@ -154,7 +166,13 @@ jobs:
           # `fetch-tags` needs history to hang the tags on; 0 is the
           # documented pairing. Kept at the default depth otherwise, so a
           # repository that does not ask for tags pays nothing.
-          fetch-depth: ${{ inputs.fetch-tags && 0 || 1 }}
+          #
+          # QUOTED, and it matters. GitHub expressions treat the number 0
+          # as falsy, so `x && 0 || 1` evaluates to 1 whatever x is: the
+          # checkout stayed shallow, no tags arrived, and `fetch-tags:
+          # true` did nothing at all. '0' is a non-empty string and
+          # therefore truthy, so the branch survives.
+          fetch-depth: ${{ inputs.fetch-tags && '0' || '1' }}
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ inputs.python-version }}
@@ -194,7 +212,13 @@ jobs:
           # `fetch-tags` needs history to hang the tags on; 0 is the
           # documented pairing. Kept at the default depth otherwise, so a
           # repository that does not ask for tags pays nothing.
-          fetch-depth: ${{ inputs.fetch-tags && 0 || 1 }}
+          #
+          # QUOTED, and it matters. GitHub expressions treat the number 0
+          # as falsy, so `x && 0 || 1` evaluates to 1 whatever x is: the
+          # checkout stayed shallow, no tags arrived, and `fetch-tags:
+          # true` did nothing at all. '0' is a non-empty string and
+          # therefore truthy, so the branch survives.
+          fetch-depth: ${{ inputs.fetch-tags && '0' || '1' }}
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ inputs.python-version }}

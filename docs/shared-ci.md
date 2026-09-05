@@ -154,6 +154,13 @@ Two halves, and both are needed. CI has to be able to see the tags:
       fetch-tags: true
 ```
 
+The flag's own trap, recorded because it cost a red build within the
+hour: the checkout depth must be written as a **quoted** `'0'`. GitHub
+expressions treat the number `0` as falsy, so the usual
+`condition && 0 || 1` ternary evaluates to `1` whatever the condition is
+-- the checkout stays shallow, no tags arrive, and `fetch-tags: true`
+does nothing while appearing to be set.
+
 And the test must not be able to pass by finding nothing. A check that
 returns early when its input is missing is not a check; where the input
 is guaranteed — CI, with `fetch-tags` on — absence is a failure of the
