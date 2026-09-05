@@ -164,22 +164,30 @@ The floor says how much of it a test must reach.
 
 ### Local databases do not share ports
 
-Each repository's compose Postgres publishes on a port of its own, because
-Docker Desktop does not fail a bind that is already taken: the container
-comes up, `compose up --wait` reports it healthy (the health check runs
-inside), and the repository's tests connect to whatever is listening on
-that port -- another repository's database. datadesk's suite ran against
-the Source Directory's database on 5434 for as long as both were up, and
-the only symptom was an authentication error.
+Each repository's compose Postgres publishes on a port of its own, and the
+target that starts it checks who is answering there, because one of the
+two ways a port can be taken is silent.
+
+Another **container** on the port is loud: `compose up` fails with `Bind
+for 0.0.0.0:5434 failed: port is already allocated` and nothing starts.
+A **host process** on the port is not: Docker Desktop starts the
+container anyway, `docker ps` reports the binding, `compose up --wait`
+reports it healthy (the health check runs inside the container), and the
+host process keeps answering. The repository's tests then run against
+whatever that process is. Measured on 2026-09-05 with a plain socket
+listening on 5435: `datadesk-test-postgres` came up "Healthy" and
+`compose port` said `0.0.0.0:5435`, while the socket held the port.
+
+Checking the port the container was given does not catch this -- Docker
+reports the port it asked for. datadesk's `make test-db` asks Postgres
+instead: `pg_control_system().system_identifier` inside the container and
+through the host port must be the same cluster.
 
 | Port | Repository | Container |
 | --- | --- | --- |
 | 5432 | MizzouNewsCrawler | `mizzou-postgres` |
 | 5434 | NewsSourceDirectory | `nsd-postgres` |
 | 5435 | datadesk | `datadesk-test-postgres` |
-
-A target that starts one should also check the port it got, not the
-port it asked for.
 
 ### Adopting it
 
