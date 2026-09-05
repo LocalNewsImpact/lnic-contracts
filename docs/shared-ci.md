@@ -8,7 +8,25 @@ They are versioned separately, in one repository, under two tag series:
 | Tag | What it versions | How a consumer pins it |
 | --- | --- | --- |
 | `v0.2.0` | the Python package | `lnic-contracts @ https://.../archive/refs/tags/v0.2.0.tar.gz` |
-| `ci-v1` | the reusable workflows | `uses: LocalNewsImpact/lnic-contracts/.github/workflows/image-build.yml@ci-v1` |
+| `ci-v1.0.0` | one iteration of the workflows, recorded | pin it where you need exactly this |
+| `ci-v1` | what consumers normally pin; follows the latest v1 | `uses: .../python-checks.yml@ci-v1` |
+
+### Two CI tags, because they do different jobs
+
+`ci-v1.2.3` never moves, so "what ran on 4 September" has an answer and a
+consumer that needs to pin exactly can. `ci-v1` follows it, so a fix
+reaches all three repositories without a pull request in each one.
+
+Either alone is worse. A moving major tag with no versions under it --
+which is what this repository had -- records nothing: `ci-v1` was moved
+by hand twice in one day and there was no way to say what it had been.
+Versions with no moving tag propagate nothing: every fix becomes a bump
+in every consumer.
+
+The safety is not that a tag cannot move. It is that the major tag only
+moves after the release's own checks pass, which is what
+`release-ci.yml` does: push `ci-v1.1.0`, it runs `make check`, and only
+then does `ci-v1` follow.
 
 Two series because the cadences differ. A workflow is edited often and
 affects nothing at runtime; the package defines a shape two services must
@@ -18,6 +36,47 @@ that had not changed, and "what is in 0.3.0" would stop being answerable.
 
 A workflow reference is a git ref, not a pip install, so pinning them
 separately costs nothing.
+
+### What a version covers, and what changes it
+
+Two series, two universes. A change outside a series' universe does not
+version it.
+
+**`vX.Y.Z` — the Python package.** `src/lnic_contracts/**` and the parts
+of `pyproject.toml` that decide what installs. The sdist carries the
+whole repository, but setuptools packages `src/` only, so a workflow
+edit changes the tarball's bytes and not one thing a consumer imports.
+
+| | The package |
+| --- | --- |
+| MAJOR | a consumer must change code to keep working: a key renamed or removed, a function gone, or the MEANING of one changed |
+| MINOR | something added that a consumer may use: a new function, a new optional key |
+| PATCH | a fix that changes nothing a consumer depends on |
+
+The important case is not the Python signature. **Renaming a key inside
+`articles.metadata` is MAJOR even when every function keeps its name**,
+because the producer and the consumer then disagree at runtime and
+articles strand held with no way to release them. That failure is the
+reason this package exists, and it does not show up as an import error.
+
+**`ci-vX.Y.Z` — the CI.** The `workflow_call` workflows
+(`python-checks.yml`, `conforms.yml`, `image-build.yml`) and
+`.github/actions/**`. Not `ci.yml` or `release-ci.yml`: those are this
+repository's own and nobody calls them.
+
+| | The CI |
+| --- | --- |
+| MAJOR | a caller must change its call, or a repository that was passing starts failing: an input renamed, removed or newly required; a job removed; **a new rule in `conforms.yml`** |
+| MINOR | a new optional input, or a job that is off by default |
+| PATCH | a fix inside a step that changes no interface |
+
+**A new conformance rule is a breaking change.** It arrives through the
+moving `ci-v1` with no pull request in any repository, and every one of
+them goes red at once for something none of them changed. New rules ship
+as `ci-v2`, and repositories move to it when they are ready to satisfy
+it.
+
+Neither series versions documentation, tests, or the README.
 
 ---
 
