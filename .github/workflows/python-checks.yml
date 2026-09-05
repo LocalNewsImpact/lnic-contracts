@@ -23,6 +23,20 @@
 # prebuilt image because its dependencies take minutes to install;
 # datadesk installs them on the runner because they take seconds. Both
 # are `make test`.
+#
+# PERMISSIONS ARE THE CALLER'S
+# ----------------------------
+# No `permissions` block here, on purpose. A called workflow can only
+# narrow what its caller granted, never widen it, and a block that
+# names `contents: read` is a ceiling every caller then has to fit
+# under. The crawler's `install` pulls a private image from GHCR, which
+# needs `packages: read`; had this file pinned `contents: read`, that
+# call would fail with "requesting packages: read, but is only allowed
+# packages: none" and no edit to the crawler could fix it.
+#
+# So each repository declares what its stages need at the call site --
+# `contents: read` for one that installs from PyPI, plus `packages:
+# read` for one that pulls an image -- and these jobs run with that.
 name: Python checks
 
 on:
@@ -73,13 +87,13 @@ on:
       install:
         description: >-
           How to install what the make targets need, when they do not
-          provision it themselves. Run before every stage.
+          provision it themselves. Run before every stage, with
+          GITHUB_TOKEN in its environment, so a repository whose stages
+          run inside a private image can log in and pull it (`make
+          ci-image`). The caller grants `packages: read` for that.
         required: false
         type: string
         default: "make setup"
-
-permissions:
-  contents: read
 
 jobs:
   lint:
@@ -104,6 +118,8 @@ jobs:
           python-version: ${{ inputs.python-version }}
           cache: pip
       - run: ${{ inputs.install }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       - run: make lint
 
   typecheck:
@@ -130,6 +146,8 @@ jobs:
           python-version: ${{ inputs.python-version }}
           cache: pip
       - run: ${{ inputs.install }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       - run: make typecheck
 
   test:
@@ -178,6 +196,8 @@ jobs:
           python-version: ${{ inputs.python-version }}
           cache: pip
       - run: ${{ inputs.install }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       - run: make test
 
   integration:
@@ -224,4 +244,6 @@ jobs:
           python-version: ${{ inputs.python-version }}
           cache: pip
       - run: ${{ inputs.install }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       - run: make test-integration
