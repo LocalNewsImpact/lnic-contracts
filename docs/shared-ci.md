@@ -167,6 +167,35 @@ is guaranteed — CI, with `fetch-tags` on — absence is a failure of the
 setup and should be reported as one, not skipped. Otherwise the flag can
 be dropped later and everything stays green.
 
+### Moving `ci-vN` does not fix a run that already exists
+
+A run resolves the workflow it calls when it is CREATED, and keeps that
+commit. Re-running it re-runs the same commit -- the broken one -- so
+moving the major tag does not rescue anything already on the board.
+
+This cost real confusion during the Source Directory's adoption. The
+sequence was:
+
+1. A push run failed on the `fetch-tags` bug in ci-v1.2.0.
+2. ci-v1.2.1 fixed it and `ci-v1` moved.
+3. Runs created after the move passed.
+4. Re-running the FAILED run reproduced the failure exactly, because it
+   was still pinned to ci-v1.2.0 -- and that fresh failure became the
+   newest result for its context, making the pull request look worse
+   than before the clean-up.
+
+What actually works:
+
+- A run created after the tag moved. A new push, or a re-run of a run
+  that was itself created after the move.
+- For a pull request already carrying a failed context: a new commit.
+  Every run on a commit contributes its contexts to that commit, and a
+  failure from a run pinned to a broken workflow cannot be taken off it.
+  Amending gives a new SHA with identical content, which is enough.
+
+So: cut the fix, move the tag, and then push, rather than re-running
+what is already red.
+
 ### Authentication is the same everywhere
 
 Every repository exposes two variables, so a shared workflow names them
