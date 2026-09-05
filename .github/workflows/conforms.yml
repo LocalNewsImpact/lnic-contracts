@@ -15,6 +15,8 @@
 #     here rather than discovered in CI
 #   - the coverage floor is the suite's (lnic_contracts.coverage_floor),
 #     run by `make test`, and the repository does not carry one of its own
+#   - CI runs once per push, not twice
+#   - the hook does not run the suite to push a branch deletion
 #
 # It reads files. It does not run anything the repository does.
 name: Conforms to the suite's pattern
@@ -89,6 +91,64 @@ jobs:
             exit 1
           }
           echo "pre-push hook present, and runs make"
+
+      - name: The hook does not run the suite for a branch deletion
+        run: |
+          set -euo pipefail
+          # pre-push receives one line per ref on stdin -- "<local_ref>
+          # <local_sha> <remote_ref> <remote_sha>" -- and a deletion's
+          # local sha is forty zeros. A hook that does not read them runs
+          # every stage to push nothing: minutes of lint, mypy, a
+          # Postgres container and the suite, for `git push origin
+          # --delete`. All four repositories now read them.
+          if ! grep -qE '0{40}' scripts/setup-hooks.sh; then
+            echo "::error::the pre-push hook does not recognise a branch deletion"
+            echo "Read the refspecs on stdin and exit 0 when every local sha"
+            echo "is forty zeros -- and only then, so that running the hook by"
+            echo "hand, with nothing on stdin, still runs the checks."
+            exit 1
+          fi
+          echo "the hook skips a deletion"
+
+      - name: CI runs once per push, not twice
+        run: |
+          set -euo pipefail
+          # `on: push:` with no branch list runs the workflow on every
+          # branch, and a pull request already runs it on the merge ref,
+          # so each push to a pull request branch ran everything twice.
+          # `concurrency` does not collapse the pair: its group is the
+          # ref, and the two runs have different refs (refs/heads/...
+          # against refs/pull/N/merge).
+          python3 -c "import yaml" 2>/dev/null || pip install --quiet pyyaml
+          python3 - <<'CHECK'
+          import sys
+          from pathlib import Path
+
+          import yaml
+
+          callers = [
+              path
+              for path in sorted(Path(".github/workflows").glob("*.yml"))
+              if "python-checks.yml@" in path.read_text()
+          ]
+          if not callers:
+              sys.exit("no workflow calls python-checks; the step before this one covers that")
+
+          for path in callers:
+              # `on` is YAML 1.1's boolean true.
+              triggers = yaml.safe_load(path.read_text())[True]
+              if "push" not in triggers:
+                  continue
+              push = triggers["push"]
+              # `push:` with nothing under it parses as None, which is the
+              # defect itself rather than the absence of a trigger.
+              if push is None or "branches" not in push:
+                  print(f"::error file={path}::CI runs on every branch push")
+                  print("A pull request already runs these stages on the merge ref.")
+                  print("Scope the trigger:  push:\n    branches: [main]")
+                  sys.exit(1)
+              print(f"{path.name}: push scoped to {push['branches']}")
+          CHECK
 
       - name: The coverage floor is the suite's, not the repository's
         run: |
