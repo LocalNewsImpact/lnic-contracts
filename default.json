@@ -1,0 +1,38 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "description": "The suite's one dependency policy. Every repository extends this and configures nothing of its own.",
+  "extends": ["config:recommended", ":semanticCommitsDisabled"],
+
+  "timezone": "America/Chicago",
+  "schedule": ["* 0-6 1 * *"],
+
+  "dependencyDashboard": true,
+  "labels": ["dependencies"],
+  "rebaseWhen": "behind-base-branch",
+  "minimumReleaseAge": "3 days",
+  "prConcurrentLimit": 3,
+
+  "packageRules": [
+    {
+      "description": "One pull request a month for everything that is not a major. Twelve separate bumps is twelve CI runs and twelve merges to move about forty lines; a major is the one case worth reading on its own.",
+      "matchUpdateTypes": ["minor", "patch", "pin", "digest"],
+      "groupName": "all non-major dependencies",
+      "groupSlug": "monthly"
+    },
+    {
+      "description": "A major is a behaviour change until somebody has read it. actions/checkout 4 to 7 crossed a Node runtime; that belongs in its own pull request.",
+      "matchUpdateTypes": ["major"],
+      "dependencyDashboardApproval": true
+    }
+  ],
+
+  "vulnerabilityAlerts": {
+    "description": "A security fix does not wait for the first of the month, and is not buried in a group of forty.",
+    "schedule": ["at any time"],
+    "groupName": null,
+    "minimumReleaseAge": null,
+    "labels": ["dependencies", "security"]
+  },
+
+  "osvVulnerabilityAlerts": true
+}

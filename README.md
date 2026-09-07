@@ -152,6 +152,14 @@ It lives in the package because that is what every repository already
 installs, and a rule each repository restates is a rule that drifts.
 The workflows themselves are in `docs/shared-ci.md`.
 
+Neither is `default.json`, the suite's dependency policy. Renovate
+resolves `extends` across repositories, so every repository carries two
+lines pointing here and the cadence, the grouping and the security
+exemption are written once. Dependabot could not do this — its config is
+per-repository and inherits nothing, which is how two of the four
+repositories came to take no version updates at all.
+`docs/dependencies.md` carries the detail.
+
 ## What does not
 
 Anything only one service uses. A contract with one consumer is a module,
