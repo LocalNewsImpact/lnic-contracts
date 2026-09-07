@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "lnic-contracts"
-version = "0.3.0"
+version = "0.4.0"
 description = "Shapes written by one LNIC service and read by another."
 requires-python = ">=3.11"
 dependencies = []
