@@ -36,6 +36,9 @@ jobs:
   release:
     name: Tag the version in pyproject
     runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.version.outputs.tag }}
+      released: ${{ steps.already.outputs.release }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -109,3 +112,138 @@ jobs:
           } > "$NOTES"
           gh release create "$TAG" --title "$TAG" --notes-file "$NOTES"
           cat "$NOTES" >> "$GITHUB_STEP_SUMMARY"
+
+  # ------------------------------------------------------------------
+  # The half that was still manual
+  # ------------------------------------------------------------------
+  #
+  # Tagging a release published nothing to anybody: both consumers pin
+  # the tarball by tag, so until their requirements line changes they go
+  # on installing the old version. v0.5.0 and v0.6.0 each needed a hand
+  # -written pull request in two repositories, and the release notes said
+  # "consumers to follow" because following was a person's job.
+  #
+  # Dependabot cannot do this. The pin is a direct URL --
+  # `lnic-contracts @ https://.../archive/refs/tags/v0.6.0.tar.gz` -- and
+  # nothing tracks versions behind one of those.
+  #
+  # So the release opens the pull request. It does not merge it: the
+  # consumer's own CI has to pass first, and that is the consumer's
+  # gate, not this repository's.
+  bump-consumers:
+    name: ${{ matrix.repo }}
+    needs: release
+    if: needs.release.outputs.released == 'yes'
+    runs-on: ubuntu-latest
+    # One consumer's failure must not stop the other's, and neither must
+    # fail the release that already happened.
+    continue-on-error: true
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - repo: LocalNewsImpact/datadesk
+            file: requirements.txt
+          - repo: LocalNewsImpact/MizzouNewsCrawler
+            file: requirements-base.txt
+    steps:
+      # A token with `contents: write` and `pull_requests: write` on the
+      # consumers. The workflow's own GITHUB_TOKEN is scoped to this
+      # repository and cannot push a branch to theirs.
+      #
+      # Absent, this says so and stops. A release that fails because
+      # nobody has made a token yet would be a worse failure than a pull
+      # request that has to be written by hand.
+      - name: Is there a token?
+        id: token
+        env:
+          TOKEN: ${{ secrets.CONSUMER_PR_TOKEN }}
+        run: |
+          if [ -z "$TOKEN" ]; then
+            echo "have=no" >> "$GITHUB_OUTPUT"
+            echo "::warning::CONSUMER_PR_TOKEN is not set; ${{ matrix.repo }} still needs its pin bumped by hand"
+          else
+            echo "have=yes" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/checkout@v4
+        if: steps.token.outputs.have == 'yes'
+        with:
+          repository: ${{ matrix.repo }}
+          token: ${{ secrets.CONSUMER_PR_TOKEN }}
+          fetch-depth: 0
+
+      - name: Open the bump
+        if: steps.token.outputs.have == 'yes'
+        env:
+          GH_TOKEN: ${{ secrets.CONSUMER_PR_TOKEN }}
+          TAG: ${{ needs.release.outputs.tag }}
+          FILE: ${{ matrix.file }}
+          REPO: ${{ matrix.repo }}
+        run: |
+          set -euo pipefail
+          PIN="lnic-contracts @ https://github.com/${{ github.repository }}/archive/refs/tags/"
+
+          # Already there: a re-run, or somebody was faster.
+          if grep -qF "${PIN}${TAG}.tar.gz" "$FILE"; then
+            echo "::notice::$REPO already pins $TAG"
+            exit 0
+          fi
+          if ! grep -qF "$PIN" "$FILE"; then
+            echo "::warning::$REPO does not pin this package in $FILE"
+            exit 0
+          fi
+
+          # One open pull request per repository is this project's rule:
+          # every merge re-runs CI on all the others. If a bump is
+          # already waiting, say so rather than stacking a second.
+          # `gh pr list` has --head for an exact branch and no prefix
+          # filter, so the prefix match is done here.
+          OPEN="$(gh pr list --repo "$REPO" --state open --json headRefName \
+                    --jq '[.[] | select(.headRefName
+                          | startswith("deps/lnic-contracts-"))] | length' \
+                    2>/dev/null || echo 0)"
+          if [ "$OPEN" != "0" ]; then
+            echo "::warning::$REPO already has an open lnic-contracts bump; $TAG not opened"
+            exit 0
+          fi
+
+          BRANCH="deps/lnic-contracts-$TAG"
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git checkout -b "$BRANCH"
+          # Python rather than sed. The pin is a URL full of characters
+          # a regex and a shell each want to read; `sed -i` takes a
+          # backup suffix on BSD and not on GNU; and this has to be
+          # right the first time it runs unattended. This form is
+          # testable on a laptop exactly as it runs on the runner.
+          python3 - "$FILE" "$PIN" "$TAG" <<'PYEOF'
+          import re, sys
+          path, pin, tag = sys.argv[1], sys.argv[2], sys.argv[3]
+          text = open(path).read()
+          # Whichever version is pinned, not a known one: a consumer
+          # may be several releases behind.
+          pattern = re.escape(pin) + r"v\d+\.\d+\.\d+\.tar\.gz"
+          new, n = re.subn(pattern, pin + tag + ".tar.gz", text)
+          if n != 1:
+              sys.exit(f"expected one pin in {path}, rewrote {n}")
+          open(path, "w").write(new)
+          print(f"pinned {tag} in {path}")
+          PYEOF
+          git add "$FILE"
+          git commit -m "lnic-contracts $TAG
+
+          Opened by the release that tagged it. Both consumers pin the
+          tarball by tag, so a release reaches nobody until this line
+          changes.
+
+          The consumer's own CI is the gate: this is a pull request, not
+          a merge."
+          git push origin "$BRANCH"
+          gh pr create --repo "$REPO" --base main --head "$BRANCH" \
+            --title "lnic-contracts $TAG" \
+            --body "Opened by [lnic-contracts $TAG](https://github.com/${{ github.repository }}/releases/tag/$TAG).
+
+          Both consumers pin the tarball by tag, so a release reaches nobody until this line changes. Dependabot cannot do it: the pin is a direct URL and nothing tracks versions behind one.
+
+          The release itself is already tagged and its checks passed there. This repository's CI is the gate for taking it."
