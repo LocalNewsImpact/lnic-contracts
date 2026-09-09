@@ -16,6 +16,11 @@ a handover with a shape.
                   or not, and what kind -- the half that says where the
                   article goes and whether it is enriched
 
+    cin_labels    the ten Critical Information Needs categories, and the
+                  order that is the model's class ids. Three services
+                  compare these as strings; the order silently relabels
+                  every prediction if it moves
+
 One thing here is not a shape: coverage_floor, the suite's 80 percent,
 which every repository's `make test` and the shared CI workflow both
 run. It lives in the package because that is what every repository
