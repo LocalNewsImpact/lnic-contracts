@@ -88,3 +88,79 @@ def test_the_version_is_read_from_pyproject_and_not_typed():
     of step."""
     reading = _step("tomllib")
     assert reading, "the version is not read from pyproject"
+
+
+# ------------------------------------------------- and the consumers follow
+
+STEPS_TEXT = TEXT[TEXT.index("bump-consumers:") :]
+
+
+def test_the_release_opens_the_consumers_pin_bump():
+    """Tagging published nothing to anybody.
+
+    Both consumers pin the tarball by tag, so until their requirements
+    line changes they go on installing the old version. v0.5.0 and
+    v0.6.0 each needed a hand-written pull request in two repositories.
+    """
+    assert "LocalNewsImpact/datadesk" in STEPS_TEXT
+    assert "LocalNewsImpact/MizzouNewsCrawler" in STEPS_TEXT
+    # Where each of them keeps the pin.
+    assert "requirements.txt" in STEPS_TEXT
+    assert "requirements-base.txt" in STEPS_TEXT
+
+
+def test_it_opens_a_pull_request_and_does_not_merge():
+    """The consumer's own CI is the gate for taking a release, and that
+    is the consumer's gate rather than this repository's."""
+    assert "gh pr create" in STEPS_TEXT
+    assert "gh pr merge" not in STEPS_TEXT
+    assert "--auto" not in STEPS_TEXT
+
+
+def test_a_missing_token_does_not_fail_the_release():
+    """The release already happened. Failing it because nobody has made a
+    cross-repository token would be a worse outcome than a pin somebody
+    bumps by hand."""
+    assert "CONSUMER_PR_TOKEN" in STEPS_TEXT
+    assert "continue-on-error: true" in STEPS_TEXT
+    assert "::warning::" in STEPS_TEXT
+
+
+def test_it_does_not_stack_a_second_bump():
+    """One open pull request per repository is this project's rule: every
+    merge re-runs CI on all the others."""
+    assert "deps/lnic-contracts-" in STEPS_TEXT
+    assert "already has an open lnic-contracts bump" in STEPS_TEXT
+
+
+def test_the_rewrite_is_python_and_not_sed():
+    """`sed -i` takes a backup suffix on BSD and not on GNU, and the pin
+    is a URL full of characters a regex and a shell each want to read.
+    This has to be right the first time it runs unattended, so it is
+    written in a form that can be run on a laptop exactly as it runs on
+    the runner."""
+    # The lines that run, not the ones that explain: the comment above
+    # says `sed -i`, and an assertion that reads it is asserting about a
+    # comment. The same slip cost a rewrite two files ago.
+    running = [
+        line
+        for line in STEPS_TEXT.split("\n")
+        if line.strip() and not line.strip().startswith("#")
+    ]
+    assert not [line for line in running if "sed -i" in line], running
+    assert any("python3 -" in line for line in running)
+    # The guard that stops it committing something unexpected.
+    assert any("expected one pin" in line for line in running)
+
+
+def test_the_heredoc_terminator_survives_the_yaml_block():
+    """Indented, it is not a terminator and the script runs as one line;
+    at column zero it is not inside the block scalar and the YAML will
+    not parse. This repository has been bitten by the first and the
+    second in the same file."""
+    for line in TEXT.split("\n"):
+        if line.strip() == "PYEOF":
+            assert line.startswith("          "), repr(line)
+            break
+    else:
+        raise AssertionError("no PYEOF terminator found")
