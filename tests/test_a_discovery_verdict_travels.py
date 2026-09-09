@@ -24,11 +24,31 @@ def test_a_verdict_carries_both_halves():
     assert verdict.is_readable(note)
 
 
-def test_the_kind_is_required():
-    """Without it a restored URL is re-classified by the model that got it
-    wrong, which is the fault this exists to fix."""
+def test_a_rejection_must_say_what_it_is_instead():
+    """A count of which kind, against a rule or a publisher, is what a fix
+    gets built from."""
     with pytest.raises(ValueError, match="kind"):
-        verdict.build(verdict=verdict.IS_A_STORY, kind="  ")
+        verdict.build(verdict=verdict.NOT_A_STORY, kind="  ")
+
+
+def test_an_ordinary_story_claims_no_category():
+    """Most stories are ordinary ones -- news, sport, business, features.
+
+    Making a reviewer choose a category for those means the category is
+    invented by the list rather than observed: a sports story stamped
+    `news` because the dropdown had to be answered. "It is a story"
+    stands alone, and the pipeline classifies it as it would any other.
+    """
+    note = verdict.build(verdict=verdict.IS_A_STORY)
+    assert verdict.is_readable(note), "an ordinary story is a complete answer"
+    assert note["kind"] == ""
+    assert verdict.status_for(note) is None
+
+
+def test_the_empty_kind_is_kept_as_a_key():
+    """So a reader can tell "no category claimed" from "written by
+    something older than this field"."""
+    assert "kind" in verdict.build(verdict=verdict.IS_A_STORY)
 
 
 def test_an_unknown_verdict_is_refused():
@@ -66,10 +86,11 @@ def test_not_a_story_decides_no_status():
         None,
         {},
         "opinion",
-        {"verdict": "story"},
-        {"verdict": "story", "kind": "opinion"},
-        {"verdict": "story", "kind": None, "decided_at": "2026-09-09"},
-        {"verdict": "story", "kind": "   ", "decided_at": "2026-09-09"},
+        {"verdict": "story", "kind": "opinion"},          # no decided_at
+        {"kind": "opinion", "decided_at": "2026-09-09"},  # no verdict
+        # A rejection with no kind: the one shape where kind is required.
+        {"verdict": "not_story", "decided_at": "2026-09-09"},
+        {"verdict": "not_story", "kind": None, "decided_at": "2026-09-09"},
     ],
 )
 def test_an_unusable_verdict_is_not_acted_on(note):
