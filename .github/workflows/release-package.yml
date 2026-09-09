@@ -1,0 +1,111 @@
+# A version bump is a release.
+#
+# `pyproject.toml` said 0.4.0 and there was no `v0.4.0` tag. Consumers
+# install from `archive/refs/tags/v<version>.tar.gz`, so that version was
+# released in name only: nothing could install it, and the repository
+# said it had shipped something it had not. The bump and the tag were two
+# steps and only one of them was in the pull request.
+#
+# So the tag follows the version, on merge to main, once the checks that
+# guard main have passed. There is nothing left to remember.
+#
+# This is the package's own tag (`v1.2.3`), not the shared CI tag
+# (`ci-v1.2.3`, release-ci.yml). Different things, different consumers:
+# one is imported by two applications, the other is a workflow three
+# repositories call.
+name: Release the package
+
+on:
+  push:
+    branches: [main]
+    # A release can only follow a version, and the version lives here.
+    paths: ["pyproject.toml"]
+
+  # For a bump that merged before this workflow existed, and for a tag
+  # deleted by hand. It refuses to move an existing tag either way.
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-package
+  cancel-in-progress: false      # never race two tags onto one repository
+
+jobs:
+  release:
+    name: Tag the version in pyproject
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0          # tags, to see what is already released
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Read the version
+        id: version
+        run: |
+          set -euo pipefail
+          VERSION="$(python -c "
+          import tomllib, pathlib
+          print(tomllib.loads(pathlib.Path('pyproject.toml').read_text())['project']['version'])
+          ")"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "tag=v$VERSION" >> "$GITHUB_OUTPUT"
+          echo "::notice::pyproject says $VERSION"
+
+      # Not an error. Most merges to main do not bump the version, and a
+      # workflow that fails on the ordinary case is a workflow whose red
+      # runs nobody reads.
+      - name: Has it been released already?
+        id: already
+        run: |
+          set -euo pipefail
+          if git rev-parse -q --verify "refs/tags/${{ steps.version.outputs.tag }}" >/dev/null; then
+            echo "release=no" >> "$GITHUB_OUTPUT"
+            echo "::notice::${{ steps.version.outputs.tag }} already exists; nothing to do"
+          else
+            echo "release=yes" >> "$GITHUB_OUTPUT"
+          fi
+
+      # The gate. Two applications import this and pin by tag; a tag
+      # pointing at something red is installed by both before anyone
+      # notices, and the pull request that would fix it installs it too.
+      - name: Everything this repository checks
+        if: steps.already.outputs.release == 'yes'
+        run: make check
+
+      - name: Tag it
+        if: steps.already.outputs.release == 'yes'
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          # Never -f. A tag consumers may already have installed must not
+          # come to mean something else.
+          git tag "${{ steps.version.outputs.tag }}" "${{ github.sha }}"
+          git push origin "refs/tags/${{ steps.version.outputs.tag }}"
+
+      - name: Say what is in it
+        if: steps.already.outputs.release == 'yes'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          TAG="${{ steps.version.outputs.tag }}"
+          PREVIOUS="$(git tag -l 'v*.*.*' --sort=-v:refname | sed -n 2p)"
+          NOTES="$(mktemp)"
+          {
+            echo "Install: \`lnic-contracts @ https://github.com/${{ github.repository }}/archive/refs/tags/$TAG.tar.gz\`"
+            if [ -n "$PREVIOUS" ]; then
+              echo
+              echo "Since \`$PREVIOUS\`:"
+              echo
+              git log --format='- %s' "$PREVIOUS..$TAG"
+            fi
+          } > "$NOTES"
+          gh release create "$TAG" --title "$TAG" --notes-file "$NOTES"
+          cat "$NOTES" >> "$GITHUB_STEP_SUMMARY"
