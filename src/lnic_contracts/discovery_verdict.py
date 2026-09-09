@@ -64,33 +64,56 @@ UNENRICHED_TYPES: tuple[str, ...] = ("obituary", "opinion", "weather")
 #: What the verdict must carry, and why each one:
 #:
 #: verdict   story or not_story. What the reviewer answered.
-#: kind      what kind of story, or what it is instead. The half that
-#:           tells the pipeline where to put the article; without it a
-#:           restored URL is re-classified from scratch.
+#: kind      what kind of story, or what it is instead.
 #: decided_at  when. A verdict older than the last re-verification is a
 #:           verdict about a different answer.
-REQUIRED_KEYS: tuple[str, ...] = ("verdict", "kind", "decided_at")
+REQUIRED_KEYS: tuple[str, ...] = ("verdict", "decided_at")
+
+#: `kind` is required for `not_story` and optional for `story`.
+#:
+#: A URL rejected as "not a story" is worth naming -- section front, tag
+#: page, homepage -- because a count of which kind, against a rule or a
+#: publisher, is what a fix gets built from.
+#:
+#: A story is different. Most stories are ordinary ones: news, sport,
+#: business, features. Making a reviewer choose a category for those
+#: means the category is invented by the list rather than observed --
+#: a sports story stamped `news` because the dropdown had to be
+#: answered. An empty kind says "an ordinary story", the pipeline
+#: classifies it as it would any other, and nothing is claimed that
+#: nobody saw.
+KIND_REQUIRED_FOR: tuple[str, ...] = (NOT_A_STORY,)
 
 
 class UnreadableVerdict(ValueError):
     """A verdict the pipeline cannot act on."""
 
 
-def build(*, verdict: str, kind: str, decided_at=None, decided_by: str = "") -> dict:
-    """The verdict to write when a reviewer answers a discovery row."""
+def build(
+    *, verdict: str, kind: str = "", decided_at=None, decided_by: str = ""
+) -> dict:
+    """The verdict to write when a reviewer answers a discovery row.
+
+    `kind` is optional for a story and required for a rejection. See
+    KIND_REQUIRED_FOR: an ordinary story claims no category, because a
+    category a reviewer was forced to pick is one nobody observed.
+    """
     verdict = str(verdict).strip()
     if verdict not in VERDICTS:
         raise ValueError(
             f"verdict must be one of {VERDICTS}, not {verdict!r}"
         )
-    if not str(kind).strip():
+    if verdict in KIND_REQUIRED_FOR and not str(kind).strip():
         raise ValueError(
-            "a verdict needs the kind: without it a restored URL is "
-            "re-classified by the model that got it wrong"
+            f"a {verdict} verdict needs the kind: a count of which kind, "
+            "against a rule or a publisher, is what a fix is built from"
         )
     when = decided_at or datetime.now(UTC)
     note = {
         "verdict": verdict,
+        # Empty for an ordinary story. Kept as a key rather than dropped,
+        # so a reader can tell "no category claimed" from "written by
+        # something older than this field".
         "kind": str(kind).strip(),
         "decided_at": when.isoformat() if hasattr(when, "isoformat") else str(when),
     }
@@ -101,7 +124,13 @@ def build(*, verdict: str, kind: str, decided_at=None, decided_by: str = "") -> 
 
 
 def missing_keys(note) -> list[str]:
-    """Which required keys this verdict lacks or leaves empty."""
+    """Which required keys this verdict lacks or leaves empty.
+
+    `kind` counts only where the verdict requires it. A story with no
+    category is a complete answer -- the commonest one -- and reading it
+    as unusable would throw away every ordinary story a reviewer
+    restored.
+    """
     if not isinstance(note, dict):
         return list(REQUIRED_KEYS)
 
@@ -111,7 +140,10 @@ def missing_keys(note) -> list[str]:
         # a naive truthiness check and the verdict would read as usable.
         return value is None or not str(value).strip()
 
-    return [key for key in REQUIRED_KEYS if absent(key)]
+    wanted = list(REQUIRED_KEYS)
+    if str(note.get("verdict", "")).strip() in KIND_REQUIRED_FOR:
+        wanted.append("kind")
+    return [key for key in wanted if absent(key)]
 
 
 def is_readable(note) -> bool:
@@ -141,5 +173,7 @@ def status_for(note) -> str | None:
         return None
     if note["verdict"] != IS_A_STORY:
         return None
-    kind = str(note["kind"]).strip()
+    # Empty is the ordinary story: the pipeline's own classification
+    # stands, which is the whole point of not making somebody choose.
+    kind = str(note.get("kind") or "").strip()
     return kind if kind in UNENRICHED_TYPES else None
