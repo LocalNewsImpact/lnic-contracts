@@ -109,12 +109,29 @@ def test_the_release_opens_the_consumers_pin_bump():
     assert "requirements-base.txt" in STEPS_TEXT
 
 
-def test_it_opens_a_pull_request_and_does_not_merge():
-    """The consumer's own CI is the gate for taking a release, and that
-    is the consumer's gate rather than this repository's."""
+def test_the_checks_are_waited_for_before_it_lands():
+    """The consumer's own CI is the gate, and the gate has to be shut
+    before the merge, not after.
+
+    This test used to assert that nothing merged at all. That was the
+    right property when a person clicked approve; now the workflow
+    lands the bump itself, and the property worth holding is that it
+    cannot land one that has not gone green. `--watch` blocks until
+    every required check has reported and exits non-zero if any failed.
+    """
     assert "gh pr create" in STEPS_TEXT
-    assert "gh pr merge" not in STEPS_TEXT
-    assert "--auto" not in STEPS_TEXT
+    waited = STEPS_TEXT.index("gh pr checks")
+    landed = STEPS_TEXT.index("gh pr merge")
+    assert waited < landed, "it merges before waiting for the checks"
+    assert "--watch" in STEPS_TEXT
+    assert "--fail-fast" in STEPS_TEXT
+
+
+def test_a_red_run_is_left_for_a_person():
+    """Failing checks are a judgement call, which is exactly what this
+    is not allowed to make. It stops and says so."""
+    assert "checks failed" in STEPS_TEXT
+    assert "left open for a person" in STEPS_TEXT
 
 
 def test_a_missing_token_does_not_fail_the_release():
