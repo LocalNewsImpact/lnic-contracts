@@ -240,10 +240,38 @@ jobs:
           The consumer's own CI is the gate: this is a pull request, not
           a merge."
           git push origin "$BRANCH"
-          gh pr create --repo "$REPO" --base main --head "$BRANCH" \
+          PR="$(gh pr create --repo "$REPO" --base main --head "$BRANCH" \
             --title "lnic-contracts $TAG" \
             --body "Opened by [lnic-contracts $TAG](https://github.com/${{ github.repository }}/releases/tag/$TAG).
 
           Both consumers pin the tarball by tag, so a release reaches nobody until this line changes. Dependabot cannot do it: the pin is a direct URL and nothing tracks versions behind one.
 
-          The release itself is already tagged and its checks passed there. This repository's CI is the gate for taking it."
+          Opened by the release workflow, which waits for this repository's required checks and lands it only if they pass. A red run leaves this open for a person.")"
+          echo "::notice::opened $PR"
+
+          # Wait for this repository's own checks, then land it.
+          #
+          # A pin bump carries no judgement. The version is already
+          # decided and already tagged; the only open question is whether
+          # this repository still passes with it, and that question has
+          # an automated answer. Asking a person to click approve adds a
+          # delay and no information -- which is why v0.5.0 and v0.6.0
+          # each sat waiting for one.
+          #
+          # CI stays the gate. `--watch` blocks until every required
+          # check has reported and exits non-zero if any failed, so the
+          # step below is reached only on green, and a red run leaves the
+          # pull request open for a person to read.
+          if ! gh pr checks "$PR" --repo "$REPO" --watch --fail-fast; then
+            echo "::warning::$REPO checks failed on $TAG; left open for a person"
+            exit 0
+          fi
+
+          # The consumer requires an approving review and grants bypass
+          # to organisation admins. This applies that same governance --
+          # wait for green, then land -- to the one case with no
+          # judgement in it. The checks are not skipped: they passed
+          # above, and this refuses rather than forcing if the branch has
+          # moved since.
+          gh pr merge "$PR" --repo "$REPO" --squash --admin --delete-branch
+          echo "::notice::landed $TAG in $REPO"
