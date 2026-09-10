@@ -181,3 +181,40 @@ def test_the_heredoc_terminator_survives_the_yaml_block():
             break
     else:
         raise AssertionError("no PYEOF terminator found")
+
+
+def test_it_waits_for_a_check_to_exist_before_waiting_for_it_to_pass():
+    """`gh pr checks` on a branch pushed a second ago reports "no checks
+    reported" and exits NON-ZERO, which is indistinguishable from a red
+    run.
+
+    v0.8.0 lost that race in both consumers -- opened at 01:02:25, "no
+    checks reported" at 01:02:26, both pull requests left open with
+    nothing ever coming back to them, while the release run reported
+    success. The wait has to be for registration first, then for the
+    verdict.
+    """
+    # The lines that run, not the ones that explain. The comment above
+    # this fix contains the string `--watch`, and an assertion reading it
+    # would compare against prose -- which is the slip
+    # `test_the_rewrite_is_python_and_not_sed` was written about, made
+    # again here on the first attempt.
+    running = "\n".join(
+        line
+        for line in STEPS_TEXT.split("\n")
+        if line.strip() and not line.strip().startswith("#")
+    )
+    registering = running.index("REGISTERED=")
+    watching = running.index("--watch")
+    assert registering < watching, "it watches before any check exists"
+    # Bounded: a consumer with genuinely no CI must not hang the job.
+    assert "registered no checks" in STEPS_TEXT
+
+
+def test_every_outcome_reaches_the_run_page():
+    """This job is `continue-on-error`, so a release whose consumer half
+    did nothing still reports success -- which is how v0.8.0 looked green
+    while publishing to nobody. Each path says what it did."""
+    assert STEPS_TEXT.count("GITHUB_STEP_SUMMARY") >= 3
+    for outcome in ("landed", "checks failed", "no checks started"):
+        assert outcome in STEPS_TEXT, outcome
