@@ -61,6 +61,22 @@ RESTORED_STATUS = "discovered"
 #: model budget on.
 UNENRICHED_TYPES: tuple[str, ...] = ("obituary", "opinion", "weather")
 
+#: Types that are stories and should never be fetched at all.
+#:
+#: Wire is syndicated: the same article runs at a dozen papers, the
+#: corpus keeps it out of BigQuery, and nothing downstream reads a wire
+#: body. Fetching one spends a request, an extraction and a wire check to
+#: reach a conclusion a reviewer already reached by reading the URL.
+#:
+#: This is a stronger instruction than UNENRICHED_TYPES. Those are
+#: extracted and kept and merely not enriched; these are not fetched, so
+#: no article row is ever created. A reviewer marking wire in the
+#: discovery queue was previously restoring the link to `discovered` --
+#: the fetch queue -- and the kind was recorded and then ignored, so the
+#: pipeline fetched it, extracted it, and rediscovered by itself what the
+#: person had already said.
+UNFETCHED_TYPES: tuple[str, ...] = ("wire",)
+
 #: What the verdict must carry, and why each one:
 #:
 #: verdict   story or not_story. What the reviewer answered.
@@ -177,3 +193,26 @@ def status_for(note) -> str | None:
     # stands, which is the whole point of not making somebody choose.
     kind = str(note.get("kind") or "").strip()
     return kind if kind in UNENRICHED_TYPES else None
+
+
+def link_status_for(note) -> str:
+    """The status the candidate link should carry, from the verdict.
+
+    `status_for` answers what an ARTICLE should be once one exists. This
+    answers whether one should exist at all, which is a different question
+    and the reason it is a separate function: the article status is read
+    after a fetch, and this is read instead of one.
+
+    `RESTORED_STATUS` for an ordinary story -- back into the fetch queue,
+    which is what "it is a story" means. The kind itself for anything in
+    `UNFETCHED_TYPES`, which keeps it out: nothing selects a candidate
+    link whose status is not `discovered`.
+
+    Anything not a usable story verdict also returns the kind or the
+    restored status rather than raising, because a caller in the middle of
+    writing one row cannot do anything useful with an exception here.
+    """
+    if not is_readable(note) or note["verdict"] != IS_A_STORY:
+        return RESTORED_STATUS
+    kind = str(note.get("kind") or "").strip()
+    return kind if kind in UNFETCHED_TYPES else RESTORED_STATUS
