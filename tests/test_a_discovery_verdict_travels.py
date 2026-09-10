@@ -112,3 +112,61 @@ def test_who_decided_is_optional_and_kept():
     )
     assert note["decided_by"] == "ed"
     assert verdict.is_readable(verdict.build(verdict=verdict.IS_A_STORY, kind="obituary"))
+
+
+# ------------------------------------------- wire is never fetched at all
+
+
+def test_wire_keeps_the_link_out_of_the_fetch_queue():
+    """A reviewer who reads a URL and says "wire" has already reached the
+    conclusion a fetch, an extraction and a wire check would reach. The
+    kind was recorded and then ignored, so the pipeline did all three
+    anyway."""
+    note = verdict.build(verdict=verdict.IS_A_STORY, kind="wire")
+    assert verdict.link_status_for(note) == "wire"
+    assert verdict.link_status_for(note) != verdict.RESTORED_STATUS
+
+
+def test_an_ordinary_story_goes_back_to_the_fetch_queue():
+    """Which is what "it is a story" means, and the commonest answer."""
+    for kind in ("", "column", "opinion", "obituary", "weather"):
+        note = verdict.build(
+            verdict=verdict.IS_A_STORY, kind=kind
+        )
+        assert (
+            verdict.link_status_for(note)
+            == verdict.RESTORED_STATUS
+        ), kind
+
+
+def test_unfetched_and_unenriched_are_different_instructions():
+    """Unenriched types are extracted and kept and merely not enriched.
+    Unfetched types are never fetched, so no article row exists. Conflating
+    them would either enrich wire or throw away obituaries."""
+    assert not set(verdict.UNFETCHED_TYPES) & set(
+        verdict.UNENRICHED_TYPES
+    )
+    # And each function answers only its own question.
+    wire = verdict.build(
+        verdict=verdict.IS_A_STORY, kind="wire"
+    )
+    assert verdict.status_for(wire) is None, (
+        "wire has no article status: there is no article"
+    )
+    obituary = verdict.build(
+        verdict=verdict.IS_A_STORY, kind="obituary"
+    )
+    assert verdict.status_for(obituary) == "obituary"
+    assert (
+        verdict.link_status_for(obituary)
+        == verdict.RESTORED_STATUS
+    )
+
+
+def test_an_unusable_verdict_restores_rather_than_raising():
+    """A caller in the middle of writing one row can do nothing useful
+    with an exception here."""
+    for bad in (None, {}, {"verdict": "story"}, {"verdict": "not_story"}, "nonsense"):
+        assert (
+            verdict.link_status_for(bad) == verdict.RESTORED_STATUS
+        ), bad
