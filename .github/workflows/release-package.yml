@@ -258,12 +258,39 @@ jobs:
           # delay and no information -- which is why v0.5.0 and v0.6.0
           # each sat waiting for one.
           #
-          # CI stays the gate. `--watch` blocks until every required
-          # check has reported and exits non-zero if any failed, so the
-          # step below is reached only on green, and a red run leaves the
-          # pull request open for a person to read.
+          # CI stays the gate. But `--watch` cannot be called the instant
+          # the pull request exists: GitHub has not registered any
+          # workflow runs on a branch pushed a second ago, `gh pr checks`
+          # says "no checks reported" and exits NON-ZERO, and that is
+          # indistinguishable from a red run.
+          #
+          # v0.8.0 lost that race in both consumers -- opened at
+          # 01:02:25, "no checks reported" at 01:02:26, both pull requests
+          # left open and nothing ever coming back to them, while the
+          # release run reported success. So: wait for a check to exist
+          # before waiting for it to pass.
+          REGISTERED=""
+          for _ in $(seq 1 30); do
+            if [ -n "$(gh pr checks "$PR" --repo "$REPO" --json name --jq 'length' 2>/dev/null | grep -v '^0$')" ]; then
+              REGISTERED="yes"
+              break
+            fi
+            sleep 10
+          done
+          if [ -z "$REGISTERED" ]; then
+            # Five minutes and nothing has started. A consumer with no CI
+            # on this branch is a real possibility and not something to
+            # merge on -- the whole point is that its own checks pass.
+            echo "::warning::$REPO registered no checks on $TAG in 5 minutes; left open for a person"
+            echo "- ⚠️ **$REPO** — no checks started; [$PR]($PR) left open" >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          # Now the wait means what it says: `--watch` blocks until every
+          # required check has reported and exits non-zero if any failed.
           if ! gh pr checks "$PR" --repo "$REPO" --watch --fail-fast; then
             echo "::warning::$REPO checks failed on $TAG; left open for a person"
+            echo "- ❌ **$REPO** — checks failed; [$PR]($PR) left open" >> "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
 
@@ -275,3 +302,9 @@ jobs:
           # moved since.
           gh pr merge "$PR" --repo "$REPO" --squash --admin --delete-branch
           echo "::notice::landed $TAG in $REPO"
+          # On the run page, because this job is `continue-on-error` and a
+          # release whose consumer half quietly did nothing still reports
+          # success. v0.8.0 did exactly that: green run, tag published,
+          # both pin bumps sitting open for 45 minutes with nothing coming
+          # back to them. A reader of the run could not tell.
+          echo "- ✅ **$REPO** — $TAG landed" >> "$GITHUB_STEP_SUMMARY"
