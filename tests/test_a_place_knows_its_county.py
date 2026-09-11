@@ -74,3 +74,68 @@ def test_the_span_distribution_is_what_the_rule_was_written_for():
     assert spans[1] == 30884
     assert sum(n for span, n in spans.items() if span > 1) == 1304
     assert max(spans) == 5
+
+
+# --- what a person may type, and what comes back ------------------------------
+
+
+def test_a_name_resolves_to_the_gazetteers_own_spelling():
+    """The canonical name is what a normalisation pass writes back."""
+    from lnic_contracts.geography import canonical_county, canonical_place
+
+    assert canonical_place("MO", "Linn") == ("2943238", "Linn")
+    assert canonical_county("MO", "Osage") == ("29151", "Osage")
+    # A state may arrive spelled out: records carry both.
+    assert canonical_county("Missouri", "Osage")[0] == "29151"
+    # And a consolidated government resolves under the name people use.
+    assert canonical_place("KY", "Lexington")[0] == "2146027"
+
+
+def test_the_preferred_state_is_ranked_first_and_not_filtered():
+    """RANKED, NEVER FILTERED.
+
+    A story about the sewer trustees of Freeburg -- a village in Osage
+    County, Missouri -- was extracted as "Freeburg, IL". Illinois has a
+    Freeburg, the lookup succeeded, and the story was filed three hundred
+    miles away; nothing downstream could catch it, because the answer was
+    internally valid. Somebody typing "Freeburg" for a Missouri outlet is
+    offered Missouri's first.
+
+    Filtering would be wrong: Whiteman Air Force Base, Nashville, Wichita
+    State, the University of Pittsburgh and Seattle were all covered by
+    Missouri outlets in one month, and a Missouri-only list makes real
+    coverage unenterable.
+    """
+    from lnic_contracts.geography import suggest_places
+
+    hits = suggest_places("Freeburg", prefer_state="MO", limit=5)
+    assert hits[0]["state"] == "MO"
+    assert "IL" in {h["state"] for h in hits}, "the other states are still offered"
+
+
+def test_a_typo_is_offered_a_correction():
+    """Suggestions exist so a near miss is corrected rather than refused."""
+    from lnic_contracts.geography import suggest_places
+
+    hits = suggest_places("Westphalya", prefer_state="MO", limit=3)
+    assert hits[0]["name"] == "Westphalia"
+    assert hits[0]["state"] == "MO"
+    assert hits[0]["exact"] is False
+
+
+def test_closeness_survives_the_sort():
+    """`get_close_matches` returns its results best-first and that order
+    is the value of it. Sorting the output by name afterwards threw it
+    away: "Nashvile" returned Asherville and Asheville and not Nashville
+    at all, because the alphabet does not know which is closer."""
+    from lnic_contracts.geography import suggest_places
+
+    assert suggest_places("Nashvile", limit=3)[0]["name"] == "Nashville"
+
+
+def test_a_state_is_read_however_it_is_written():
+    from lnic_contracts.geography import state_code
+
+    assert state_code("MO") == state_code("mo") == state_code("Missouri") == "MO"
+    assert state_code("") is None
+    assert state_code("Freedonia") is None

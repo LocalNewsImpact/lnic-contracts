@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "lnic-contracts"
-version = "0.9.0"
+version = "0.10.0"
 description = "Shapes written by one LNIC service and read by another."
 requires-python = ">=3.11"
 dependencies = []
@@ -27,7 +27,7 @@ where = ["src"]
 # rule without the table would leave each consumer to find its own copy,
 # which is the arrangement this module exists to end.
 [tool.setuptools.package-data]
-lnic_contracts = ["data/*.json"]
+lnic_contracts = ["data/*.json", "data/*.csv"]
 
 # Matches the toolchain in MizzouNewsCrawler, datadesk and NewsSourceDirectory,
 # so a contract edited from any of them is formatted the same way.

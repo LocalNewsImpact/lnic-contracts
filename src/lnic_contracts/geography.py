@@ -47,10 +47,21 @@ that get mentioned in news are the large ones that span counties.
 
 from __future__ import annotations
 
+import csv
 import json
+import re
 from importlib import resources
 
-__all__ = ["PLACE_COUNTY_COUNT", "county_for_place", "to_county"]
+__all__ = [
+    "PLACE_COUNTY_COUNT",
+    "canonical_county",
+    "canonical_place",
+    "county_for_place",
+    "state_code",
+    "suggest_counties",
+    "suggest_places",
+    "to_county",
+]
 
 #: Places in the crosswalk. Asserted by the tests so a truncated or
 #: swapped data file fails loudly rather than resolving fewer places.
@@ -96,3 +107,215 @@ def to_county(geoid: str | None, level: str | None) -> str | None:
     if level == "place":
         return county_for_place(geoid)[0]
     return None
+
+
+# --- names, and what to offer when one does not match ------------------------
+#
+# A typed place name is worth nothing until it resolves, and one that
+# resolves to the WRONG place is worse than one that does not resolve at
+# all. Both halves live here for the same reason the crosswalk does: the
+# console suggests names and the crawler resolves them, and if those read
+# different tables a reviewer can pick a suggestion that then fails, with
+# no way to understand why.
+#
+# Two copies of `census_places.csv` existed before this -- one per
+# repository -- which is exactly the arrangement `county_for_place`
+# removed above.
+
+#: LSAD descriptors the gazetteers append to a name, and the trailing
+#: parenthetical that sits AFTER one. See `_bare` for why both.
+_SUFFIX = re.compile(
+    r"\s+(city|town|village|borough|cdp|municipality|comunidad|"
+    r"zona urbana|urban county|metro government|metropolitan government|"
+    r"unified government|consolidated government)$",
+    re.IGNORECASE,
+)
+_COUNTY_SUFFIX = re.compile(
+    r"\s+(county|parish|borough|census area|municipality|municipio|"
+    r"city and borough|planning region|city)$",
+    re.IGNORECASE,
+)
+_PAREN = re.compile(r"\s*\([^)]*\)\s*$")
+
+_places: dict | None = None
+_counties: dict | None = None
+
+
+def _fold(name: str) -> str:
+    """Lowercase, collapse whitespace, drop punctuation but keep an
+    internal apostrophe -- "Lee's Summit" is one place, not two."""
+    text = (name or "").strip().lower()
+    text = re.sub(r"[^\w\s']", " ", text)
+    return " ".join(text.split())
+
+
+def _bare(name: str) -> str:
+    """A gazetteer name without its type suffix.
+
+    The parenthetical comes off FIRST: it sits after the descriptor, so
+    `_SUFFIX` anchored to the end never matches
+    "Nashville-Davidson metropolitan government (balance)" while it is
+    there, and the whole legal name becomes the key.
+    """
+    return _SUFFIX.sub("", _PAREN.sub("", name or "")).strip()
+
+
+def _load_names() -> tuple[dict, dict]:
+    global _places, _counties
+    if _places is None:
+        places: dict[tuple[str, str], tuple[str, str]] = {}
+        rows = (
+            resources.files("lnic_contracts")
+            .joinpath("data/census_places.csv")
+            .read_text()
+            .splitlines()
+        )
+        for row in csv.DictReader(rows):
+            bare = _bare(row["NAME"])
+            value = (row["GEOID"], bare)
+            key = (row["USPS"], _fold(bare))
+            # First wins on a tie, the same rule the crawler's gazetteer
+            # has always used for two places sharing a bare name.
+            places.setdefault(key, value)
+            # A consolidated government is filed under its legal name and
+            # written under a shorter one: nobody types "Lexington-
+            # Fayette". Each half is registered, and first-wins keeps a
+            # real place's name its own -- California has a Sunnyside, so
+            # "Sunnyside-Tahoe City" does not get to claim it.
+            if "-" in bare:
+                for part in bare.split("-"):
+                    if part.strip():
+                        places.setdefault((row["USPS"], _fold(part)), value)
+        counties: dict[tuple[str, str], tuple[str, str]] = {}
+        rows = (
+            resources.files("lnic_contracts")
+            .joinpath("data/census_counties.csv")
+            .read_text()
+            .splitlines()
+        )
+        for row in csv.DictReader(rows):
+            bare = _COUNTY_SUFFIX.sub("", row["NAME"]).strip()
+            counties[(row["USPS"], _fold(bare))] = (row["GEOID"], bare)
+        _places, _counties = places, counties
+    return _places, _counties
+
+
+def canonical_place(state: str, name: str) -> tuple[str | None, str | None]:
+    """`(GEOID, the gazetteer's own spelling)` for a place, or `(None, None)`.
+
+    The canonical name is what a normalisation pass should write back --
+    "St. Louis", not "saint louis".
+    """
+    places, _ = _load_names()
+    hit = places.get((state_code(state) or "", _fold(name)))
+    return hit if hit else (None, None)
+
+
+def canonical_county(state: str, name: str) -> tuple[str | None, str | None]:
+    """`(GEOID, the gazetteer's own spelling)` for a county."""
+    _, counties = _load_names()
+    hit = counties.get((state_code(state) or "", _fold(name)))
+    return hit if hit else (None, None)
+
+
+def _suggest(table: dict, name: str, prefer_state: str | None, limit: int):
+    """Close names, the preferred state's first.
+
+    RANKED, NEVER FILTERED (decided 2026-09-11).
+
+    Ranking catches the error the pipeline actually made: a story about
+    the sewer trustees of Freeburg, a village in Osage County, Missouri,
+    was extracted as "Freeburg, IL". Illinois genuinely has a Freeburg,
+    the lookup succeeded, and the story was filed three hundred miles
+    away -- nothing downstream could catch it, because the answer was
+    internally valid. Somebody typing "Freeburg" while working a Missouri
+    outlet is offered Missouri's first.
+
+    Filtering to the preferred state would be wrong, and one month of one
+    corpus proves it: Whiteman Air Force Base, Nashville, Wichita State,
+    the University of Pittsburgh and Seattle were all covered by Missouri
+    outlets. A Missouri-only list makes real coverage unenterable, which
+    is how a queue teaches people to work around it.
+    """
+    import difflib
+
+    want = _fold(name)
+    if not want:
+        return []
+    prefer = state_code(prefer_state) if prefer_state else None
+    pool = {key[1] for key in table}
+    close = difflib.get_close_matches(want, pool, n=limit * 6, cutoff=0.72)
+    # `get_close_matches` returns its results BEST FIRST, and that order
+    # is the whole value of it. Sorting the output by name afterwards
+    # threw it away: "Nashvile" returned Asherville and Asheville and not
+    # Nashville at all, because the alphabet does not know which is
+    # closer. The position is kept and sorted on.
+    rank = {folded: i for i, folded in enumerate(close)}
+
+    out, seen = [], set()
+    for folded in close:
+        for (usps, key), (geoid, official) in table.items():
+            if key != folded or geoid in seen:
+                continue
+            seen.add(geoid)
+            out.append(
+                {
+                    "geoid": geoid,
+                    "name": official,
+                    "state": usps,
+                    "exact": key == want,
+                    "_rank": rank[folded],
+                }
+            )
+    # Exact first, then the preferred state, then how close it is.
+    out.sort(
+        key=lambda row: (
+            not row["exact"],
+            prefer is not None and row["state"] != prefer,
+            row["_rank"],
+            row["name"],
+        )
+    )
+    return [{k: v for k, v in row.items() if k != "_rank"} for row in out[:limit]]
+
+
+def suggest_places(name: str, prefer_state: str | None = None, limit: int = 8):
+    """Places close to what was typed, the preferred state's first."""
+    places, _ = _load_names()
+    return _suggest(places, name, prefer_state, limit)
+
+
+def suggest_counties(name: str, prefer_state: str | None = None, limit: int = 8):
+    """Counties close to what was typed, the preferred state's first."""
+    _, counties = _load_names()
+    return _suggest(counties, name, prefer_state, limit)
+
+
+# Source records carry a state as "MO" or "Missouri" depending on when
+# they were loaded, so every lookup normalises first.
+_STATE_BY_NAME = {
+    "alabama": "AL", "alaska": "AK", "arizona": "AZ", "arkansas": "AR",
+    "california": "CA", "colorado": "CO", "connecticut": "CT",
+    "delaware": "DE", "district of columbia": "DC", "florida": "FL",
+    "georgia": "GA", "hawaii": "HI", "idaho": "ID", "illinois": "IL",
+    "indiana": "IN", "iowa": "IA", "kansas": "KS", "kentucky": "KY",
+    "louisiana": "LA", "maine": "ME", "maryland": "MD",
+    "massachusetts": "MA", "michigan": "MI", "minnesota": "MN",
+    "mississippi": "MS", "missouri": "MO", "montana": "MT",
+    "nebraska": "NE", "nevada": "NV", "new hampshire": "NH",
+    "new jersey": "NJ", "new mexico": "NM", "new york": "NY",
+    "north carolina": "NC", "north dakota": "ND", "ohio": "OH",
+    "oklahoma": "OK", "oregon": "OR", "pennsylvania": "PA",
+    "puerto rico": "PR", "rhode island": "RI", "south carolina": "SC",
+    "south dakota": "SD", "tennessee": "TN", "texas": "TX", "utah": "UT",
+    "vermont": "VT", "virginia": "VA", "washington": "WA",
+    "west virginia": "WV", "wisconsin": "WI", "wyoming": "WY",
+}
+
+
+def state_code(value: str | None) -> str | None:
+    """`"MO"` for "MO", "mo" or "Missouri"; None for anything else."""
+    text = (value or "").strip()
+    if len(text) == 2 and text.upper() in set(_STATE_BY_NAME.values()):
+        return text.upper()
+    return _STATE_BY_NAME.get(text.lower())
