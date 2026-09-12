@@ -124,19 +124,32 @@ def test_wire_keeps_the_link_out_of_the_fetch_queue():
     anyway."""
     note = verdict.build(verdict=verdict.IS_A_STORY, kind="wire")
     assert verdict.link_status_for(note) == "wire"
-    assert verdict.link_status_for(note) != verdict.RESTORED_STATUS
+    assert verdict.link_status_for(note) != verdict.VERIFIED_STATUS
 
 
-def test_an_ordinary_story_goes_back_to_the_fetch_queue():
-    """Which is what "it is a story" means, and the commonest answer."""
+def test_an_ordinary_story_is_verified_not_sent_back_to_verification():
+    """The discovery queue is a POST-verification review. StorySniffer has
+    already run -- that is how the link got a status -- and a reviewer is
+    approving, rejecting or correcting what it decided. That places the
+    record after verification, so its status is verification's OUTPUT
+    (`article`), never its input (`discovered`).
+
+    It used to be `discovered` -- verification's INPUT -- so the verdict
+    went back to StorySniffer to be guessed at again. 449 human verdicts
+    were sitting there, unable to move at all with the verification cron
+    suspended.
+
+    The general rule, and the reason this is in the contract: a review
+    that happens after a stage is an approval, a rejection, or a change to
+    that stage's output. It does not put the record back into the stage it
+    has just been reviewed out of."""
     for kind in ("", "column", "opinion", "obituary", "weather"):
         note = verdict.build(
             verdict=verdict.IS_A_STORY, kind=kind
         )
-        assert (
-            verdict.link_status_for(note)
-            == verdict.RESTORED_STATUS
-        ), kind
+        assert verdict.link_status_for(note) == verdict.VERIFIED_STATUS, kind
+        assert verdict.link_status_for(note) == "article", kind
+        assert verdict.link_status_for(note) != "discovered", kind
 
 
 def test_unfetched_and_unenriched_are_different_instructions():
@@ -159,7 +172,7 @@ def test_unfetched_and_unenriched_are_different_instructions():
     assert verdict.status_for(obituary) == "obituary"
     assert (
         verdict.link_status_for(obituary)
-        == verdict.RESTORED_STATUS
+        == verdict.VERIFIED_STATUS
     )
 
 
@@ -168,5 +181,16 @@ def test_an_unusable_verdict_restores_rather_than_raising():
     with an exception here."""
     for bad in (None, {}, {"verdict": "story"}, {"verdict": "not_story"}, "nonsense"):
         assert (
-            verdict.link_status_for(bad) == verdict.RESTORED_STATUS
+            verdict.link_status_for(bad) == verdict.VERIFIED_STATUS
         ), bad
+
+
+def test_a_human_verdict_never_returns_a_stage_input():
+    """The general rule, held as a test. `discovered` is verification's
+    input; a verdict that resolves to it sends a reviewed record back to
+    be judged by the process the reviewer was correcting."""
+    for kind in ("", "news", "column", "opinion", "obituary", "weather", "wire"):
+        note = verdict.build(verdict=verdict.IS_A_STORY, kind=kind)
+        assert verdict.link_status_for(note) != "discovered", kind
+    for bad in (None, {}, {"verdict": "story"}, "nonsense"):
+        assert verdict.link_status_for(bad) != "discovered", bad

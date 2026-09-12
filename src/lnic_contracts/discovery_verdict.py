@@ -47,8 +47,35 @@ IS_A_STORY = "story"
 NOT_A_STORY = "not_story"
 VERDICTS: tuple[str, ...] = (IS_A_STORY, NOT_A_STORY)
 
-#: The status a link goes back to so the pipeline fetches it again.
-RESTORED_STATUS = "discovered"
+#: The status a human story verdict puts a link in: VERIFIED, and waiting
+#: to be fetched.
+#:
+#: This was `discovered` -- verification's INPUT -- so a person who read a
+#: URL and said "this is a story" sent it back to StorySniffer to be
+#: guessed at again. 449 human verdicts sat there, and with the
+#: verification cron suspended they could not move at all.
+#:
+#: Nothing is skipped and nothing is repeated. This review is
+#: POST-verification: StorySniffer has already run -- that is how the link
+#: got a status at all -- and the discovery queue shows what it decided.
+#: A reviewer there is approving, rejecting or correcting a verification
+#: that has already happened, which places the record AFTER verification,
+#: whichever way the answer goes.
+#:
+#: So the status is verification's OUTPUT. `article` when the answer is
+#: "it is a story", the kind itself when the answer keeps it out of the
+#: fetch queue. Never `discovered`, which is verification's INPUT: that
+#: returns the record to the process whose answer was just reviewed, to be
+#: decided again by the thing that got it wrong.
+#:
+#: The general rule, which is why this lives in the contract rather than
+#: in one queue: a review after a stage is an approval, a rejection, or a
+#: change to that stage's output, and the record carries on from there.
+#:
+#: The exception is a reviewer explicitly asking for a stage to be redone
+#: -- `reextract` in the extraction queue -- where going back is the
+#: instruction rather than an accident of the mapping.
+VERIFIED_STATUS = "article"
 
 #: Types that are stories and are extracted, but which no enrichment
 #: stage selects. A verdict naming one of these is the instruction to
@@ -203,16 +230,19 @@ def link_status_for(note) -> str:
     and the reason it is a separate function: the article status is read
     after a fetch, and this is read instead of one.
 
-    `RESTORED_STATUS` for an ordinary story -- back into the fetch queue,
-    which is what "it is a story" means. The kind itself for anything in
-    `UNFETCHED_TYPES`, which keeps it out: nothing selects a candidate
-    link whose status is not `discovered`.
+    `VERIFIED_STATUS` for an ordinary story: the person has verified it,
+    and it waits to be fetched. NOT `discovered`, which is verification's
+    own input -- see the constant.
+
+    The kind itself for anything in `UNFETCHED_TYPES`, which keeps it out
+    of the fetch queue: recording the kind IS the instruction not to
+    fetch.
 
     Anything not a usable story verdict also returns the kind or the
-    restored status rather than raising, because a caller in the middle of
+    verified status rather than raising, because a caller in the middle of
     writing one row cannot do anything useful with an exception here.
     """
     if not is_readable(note) or note["verdict"] != IS_A_STORY:
-        return RESTORED_STATUS
+        return VERIFIED_STATUS
     kind = str(note.get("kind") or "").strip()
-    return kind if kind in UNFETCHED_TYPES else RESTORED_STATUS
+    return kind if kind in UNFETCHED_TYPES else VERIFIED_STATUS
