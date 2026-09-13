@@ -186,6 +186,70 @@ NEVER_FETCHED: tuple[str, ...] = UNFETCHED_TYPES + (SECTION_FRONT,)
 NEVER_CLASSIFIED: tuple[str, ...] = UNENRICHED_TYPES + (SECTION_FRONT,)
 
 
+#: THE ONE LIST OF WHAT A URL CAN BE, for every queue that asks.
+#:
+#: Two queues ask "what is this": discovery, before a fetch, and extraction,
+#: after one. Each carried its own list and they drifted. By 2026-09-13
+#: discovery offered seventeen kinds of not-a-story -- section front,
+#: notices, feed, homepage, tag page, search, file, account, newsletter,
+#: static page, briefs, not found, other -- and extraction offered one,
+#: "Not an article", plus video, gallery, event, e-edition. A reviewer
+#: holding a page of legal notices in the extraction queue had no word for
+#: it, and 61 such rows were filed under "Out of scope" -- a scope status
+#: the reviewer did not mean and the pipeline then believed.
+#:
+#: Both queues read these. The kind a reviewer names is kept on the
+#: decision, so a count by kind per publisher is what a fix gets built
+#: from; the STATUS it lands in is the pipeline's and comes from the maps
+#: below -- most non-story kinds are `not_article`, a section front is
+#: `section_front`, a story kind is whatever WITHHELD_STATUS says.
+#:
+#: (value, label). Values are the keys everything else is keyed on; labels
+#: are what a person reads. A queue may ADD verbs of its own -- extraction
+#: has "it is a news story, put it back" and "paywalled stub" -- but the
+#: KINDS are these and only these.
+STORY_KINDS: tuple[tuple[str, str], ...] = (
+    ("obituary", "Obituary"),
+    ("opinion", "Opinion"),
+    ("column", "Column"),
+    ("weather", "Weather"),
+    ("wire", "Wire"),
+    ("non_english", "Not in English"),
+)
+
+NOT_STORY_KINDS: tuple[tuple[str, str], ...] = (
+    ("not_found", "404 or dead link"),
+    ("feed", "Feed (RSS, Atom or JSON)"),
+    (SECTION_FRONT_KIND, "Section front"),
+    # A briefs roundup is many short items on one page, so there is no
+    # single story to extract -- the same shape as a section front rather
+    # than a story that happens to be short.
+    ("news_briefs", "News briefs"),
+    ("tag_or_author", "Tag or author page"),
+    ("search", "Search results"),
+    ("video", "Video"),
+    ("photo_gallery", "Photo gallery"),
+    ("event", "Event listing"),
+    ("notices", "Classifieds or legal notices"),
+    ("file", "PDF or other file"),
+    ("account", "Subscribe or account page"),
+    ("newsletter", "Newsletter signup"),
+    ("static_page", "Contact, about or staff page"),
+    ("homepage", "Homepage"),
+    ("e_edition", "E-edition"),
+    # Sponsored copy running as editorial, which no detector looks for.
+    ("advertorial", "Advertorial"),
+    ("other", "Other"),
+)
+
+#: The article status a not-a-story kind lands in, when an article row
+#: already exists for it (the extraction queue's case). `not_article` unless
+#: the kind has a status of its own.
+def not_story_status_for(kind: str) -> str:
+    """Where an article a reviewer says is not a story goes."""
+    return NOT_STORY_STATUS.get(kind, "not_article")
+
+
 #: What the verdict must carry, and why each one:
 #:
 #: verdict   story or not_story. What the reviewer answered.

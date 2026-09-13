@@ -530,3 +530,62 @@ class TestAVerdictDecidesAnArticleThatAlreadyExists:
             verdict.UNENRICHED_TYPES + verdict.UNFETCHED_TYPES
         )
         assert "news" not in verdict.WITHHELD_STATUS
+
+
+# ---------------------------------------------------------------------------
+# One vocabulary for what a URL is, for every queue that asks.
+# ---------------------------------------------------------------------------
+
+
+class TestOneVocabularyForWhatAUrlIs:
+    def test_every_kind_has_a_value_and_a_label(self):
+        for value, label in verdict.STORY_KINDS + verdict.NOT_STORY_KINDS:
+            assert value and value == value.lower() and " " not in value, value
+            assert label and label.strip() == label and label != value, label
+
+    def test_no_kind_is_both_a_story_and_not(self):
+        story = {v for v, _ in verdict.STORY_KINDS}
+        not_story = {v for v, _ in verdict.NOT_STORY_KINDS}
+        assert not story & not_story
+
+    def test_every_withheld_story_kind_is_offerable(self):
+        """A kind the pipeline withholds on -- obituary, wire, non-English
+        -- must be a kind a reviewer can name, or the withholding is
+        unreachable from the console."""
+        offered = {v for v, _ in verdict.STORY_KINDS}
+        for kind in verdict.UNENRICHED_TYPES + verdict.UNFETCHED_TYPES:
+            if kind == "other":
+                continue  # not a story: offered on the other list
+            assert kind in offered, kind
+        assert "other" in {v for v, _ in verdict.NOT_STORY_KINDS}
+
+    def test_the_kinds_extraction_lacked_are_here(self):
+        """The drift this closes. Extraction offered one word, "Not an
+        article", for all of these; a reviewer holding legal notices had
+        no way to say so and 61 rows went to "Out of scope" instead."""
+        offered = {v for v, _ in verdict.NOT_STORY_KINDS}
+        for kind in (
+            "notices",
+            "section_index",
+            "feed",
+            "homepage",
+            "tag_or_author",
+            "search",
+            "file",
+            "account",
+            "newsletter",
+            "static_page",
+            "news_briefs",
+            "not_found",
+        ):
+            assert kind in offered, kind
+
+    def test_a_section_front_keeps_its_own_status_and_the_rest_are_not_article(self):
+        assert verdict.not_story_status_for("section_index") == verdict.SECTION_FRONT
+        for kind, _ in verdict.NOT_STORY_KINDS:
+            if kind != "section_index":
+                assert verdict.not_story_status_for(kind) == "not_article", kind
+
+    def test_an_unknown_kind_is_not_article_rather_than_an_error(self):
+        """A caller mid-write cannot do anything useful with an exception."""
+        assert verdict.not_story_status_for("something_new") == "not_article"
