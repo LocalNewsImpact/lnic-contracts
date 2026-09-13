@@ -144,6 +144,48 @@ UNFETCHED_STATUS: dict[str, str] = {
     "non_english": "non_english",
 }
 
+#: A section front is not a story, and it is the one not-a-story kind the
+#: crawler decides BY ITSELF -- from the shape of the URL, before any person
+#: sees it -- so it is the one that needs a status of its own.
+#:
+#: Every other kind in the console's rejection list is a human judgement on
+#: one URL at a time, and `not_article` carries those perfectly well. A date
+#: archive is different: `sheridanexpress.blogspot.com/2020/03` is a monthly
+#: listing, there are 825 of that shape in `candidate_links` and 104 already
+#: stored as articles, and discovery queued every one of them as a story.
+#:
+#: They were never rejected by anybody, which is why leaving the status alone
+#: -- the console's deliberate behaviour for a rejection -- does not reach
+#: them. Their titles are the blog's name, because a monthly archive has no
+#: headline to find, and 89 of them were CIN-classified and some enriched on
+#: that basis.
+#:
+#: Folded into `not_article` they stop being answerable: the comment on
+#: `non_english` above makes the same argument from the other direction,
+#: that a kind folded into `not_article` is indistinguishable from a section
+#: front. This is the section front, and it should be countable for exactly
+#: the reason that one is.
+SECTION_FRONT = "section_front"
+
+#: The console's value for the kind, which is not the status's name. The list
+#: a reviewer picks from says `section_index`; the status a link holds says
+#: `section_front`. Both names already exist in their own repository and
+#: renaming either breaks a queue or a query, so the contract holds the
+#: mapping instead of asking one side to change.
+SECTION_FRONT_KIND = "section_index"
+
+#: Kinds that are not stories and hold a status of their own rather than
+#: `not_article`. One entry today; the shape is here so the next one is a
+#: line rather than a mechanism.
+NOT_STORY_STATUS: dict[str, str] = {SECTION_FRONT_KIND: SECTION_FRONT}
+
+#: A section front is never fetched and never classified. There is no story
+#: on the page to extract, so an article row for one is a bug rather than a
+#: thin article -- the 104 that exist hold navigation as their body.
+NEVER_FETCHED: tuple[str, ...] = UNFETCHED_TYPES + (SECTION_FRONT,)
+NEVER_CLASSIFIED: tuple[str, ...] = UNENRICHED_TYPES + (SECTION_FRONT,)
+
+
 #: What the verdict must carry, and why each one:
 #:
 #: verdict   story or not_story. What the reviewer answered.
@@ -276,6 +318,11 @@ def link_status_for(note) -> str:
     and it waits to be fetched. NOT `discovered`, which is verification's
     own input -- see the constant.
 
+    A rejection returns where a rejection belongs: `NOT_STORY_STATUS` for a
+    kind that has its own status, `not_article` otherwise. Never
+    `VERIFIED_STATUS`, which would queue a fetch for a URL a person had just
+    said was not a story.
+
     The kind itself for anything in `UNFETCHED_TYPES`, which keeps it out
     of the fetch queue: recording the kind IS the instruction not to
     fetch.
@@ -284,9 +331,18 @@ def link_status_for(note) -> str:
     verified status rather than raising, because a caller in the middle of
     writing one row cannot do anything useful with an exception here.
     """
-    if not is_readable(note) or note["verdict"] != IS_A_STORY:
+    if not is_readable(note):
         return VERIFIED_STATUS
     kind = str(note.get("kind") or "").strip()
+    if note["verdict"] != IS_A_STORY:
+        # A rejection is not a verification. Returning VERIFIED_STATUS here
+        # sent a URL a person had just called "not a story" to be fetched,
+        # which is the opposite of the answer. The console never reaches this
+        # -- its rejection path deliberately leaves the status alone -- so
+        # nothing was fetched on this branch in production; it is wrong for
+        # the next caller, and the kind is worth keeping where it has a
+        # status of its own.
+        return NOT_STORY_STATUS.get(kind, "not_article")
     if kind in UNFETCHED_TYPES:
         return UNFETCHED_STATUS[kind]
     return VERIFIED_STATUS

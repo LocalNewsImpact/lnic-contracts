@@ -308,3 +308,114 @@ def test_a_non_english_verdict_is_still_a_story_verdict():
     note = verdict.build(verdict=verdict.IS_A_STORY, kind="non_english")
     assert note["verdict"] == verdict.IS_A_STORY
     assert note["kind"] == "non_english"
+
+
+# ---------------------------------------------------------------------------
+# A section front is not a story, and it is the one kind the crawler decides
+# by itself -- from the URL shape, before any person sees it.
+# ---------------------------------------------------------------------------
+
+
+class TestASectionFrontIsCountable:
+    def test_it_has_a_status_of_its_own(self):
+        """Folded into `not_article` the question "how many of these did
+        discovery queue as stories" stops being answerable. That is the
+        same argument the `non_english` comment makes from the other
+        direction, naming the section front as the thing it must not be
+        confused with."""
+        assert verdict.SECTION_FRONT == "section_front"
+        assert verdict.SECTION_FRONT not in ("not_article", "wire")
+
+    def test_the_kind_and_the_status_are_different_names(self):
+        """The console's list says `section_index`; the status says
+        `section_front`. Both names already exist in their own repository,
+        so the contract holds the mapping rather than asking one side to
+        rename and break a queue or a query."""
+        assert verdict.SECTION_FRONT_KIND == "section_index"
+        assert (
+            verdict.NOT_STORY_STATUS[verdict.SECTION_FRONT_KIND]
+            == verdict.SECTION_FRONT
+        )
+
+    def test_it_is_never_fetched_and_never_classified(self):
+        """There is no story on the page. An article row for one holds
+        navigation as its body, which is what the 104 in production do."""
+        assert verdict.SECTION_FRONT in verdict.NEVER_FETCHED
+        assert verdict.SECTION_FRONT in verdict.NEVER_CLASSIFIED
+
+    def test_the_never_lists_still_contain_everything_they_did(self):
+        """Added to, not replaced. A list that quietly stopped covering
+        `wire` or `obituary` would reopen every bug those entries close."""
+        for kind in verdict.UNFETCHED_TYPES:
+            assert kind in verdict.NEVER_FETCHED, kind
+        for kind in verdict.UNENRICHED_TYPES:
+            assert kind in verdict.NEVER_CLASSIFIED, kind
+
+
+class TestARejectionIsNotAVerification:
+    def _note(self, kind):
+        return {
+            "verdict": verdict.NOT_A_STORY,
+            "kind": kind,
+            "decided_at": "2026-09-13T00:00:00+00:00",
+        }
+
+    def test_a_rejected_section_front_holds_its_own_status(self):
+        assert (
+            verdict.link_status_for(self._note("section_index"))
+            == verdict.SECTION_FRONT
+        )
+
+    def test_every_other_rejection_lands_in_not_article(self):
+        for kind in ("homepage", "search", "feed", "tag_or_author", "video"):
+            assert (
+                verdict.link_status_for(self._note(kind)) == "not_article"
+            ), kind
+
+    def test_a_rejection_is_never_sent_to_be_fetched(self):
+        """THE POINT. This branch used to return VERIFIED_STATUS, which
+        queues a fetch -- for a URL a person had just said was not a
+        story. The console never reaches it, so nothing was fetched on
+        this path in production, but it was the wrong answer waiting for
+        the next caller."""
+        for kind in ("section_index", "homepage", "search", "video", "file"):
+            got = verdict.link_status_for(self._note(kind))
+            assert got != verdict.VERIFIED_STATUS, kind
+
+    def test_a_rejection_with_no_kind_is_malformed_and_fails_safe(self):
+        """`kind` is required for `not_story` -- KIND_REQUIRED_FOR says so --
+        so a rejection without one is not a readable verdict at all. It
+        keeps the old fallback rather than withholding a URL on the
+        strength of a half-written note."""
+        assert (
+            verdict.link_status_for(self._note("")) == verdict.VERIFIED_STATUS
+        )
+
+    def test_a_story_verdict_is_untouched_by_any_of_this(self):
+        decided = "2026-09-13T00:00:00+00:00"
+        story = {"verdict": verdict.IS_A_STORY, "decided_at": decided}
+        assert (
+            verdict.link_status_for({**story, "kind": "news"})
+            == verdict.VERIFIED_STATUS
+        )
+        assert (
+            verdict.link_status_for({**story, "kind": ""})
+            == verdict.VERIFIED_STATUS
+        )
+        assert verdict.link_status_for({**story, "kind": "wire"}) == "wire"
+        assert (
+            verdict.link_status_for({**story, "kind": "non_english"})
+            == "non_english"
+        )
+
+    def test_an_unreadable_note_still_fails_safe(self):
+        """A malformed verdict cannot be read as a rejection either, so it
+        keeps the old fallback rather than silently withholding a URL."""
+        assert (
+            verdict.link_status_for({})
+            == verdict.VERIFIED_STATUS
+        )
+        assert (
+            verdict.link_status_for(None)
+            == verdict.VERIFIED_STATUS
+        )
