@@ -286,6 +286,34 @@ def read(note) -> dict:
     return dict(note)
 
 
+#: The article status every withheld kind lands in, unfetched kinds
+#: included.
+#:
+#: `UNFETCHED_TYPES` used to answer None here, on the reasoning that a kind
+#: never fetched has no article to give a status to. That is true of the
+#: kind and false of the record: articles exist for all of them. They were
+#: extracted before the verdict was given, or the verdict arrived later --
+#: 82 were backfilled onto links on 2026-09-13 -- and `status_for` is the
+#: only thing that reads a verdict onto an article.
+#:
+#: The cost of answering None was a record parked where nothing could reach
+#: it. Enrichment refuses a withheld kind, so nothing was spent; but the
+#: article stayed at `labeled`, which is not terminal, so no settle could
+#: close it and it counted as outstanding for ever. Three articles sat in
+#: exactly that state and had to be moved by hand.
+#:
+#: A reviewer calling something wire means it is wire. The queue exists so
+#: that a person's answer decides, and weighing it against the detector's
+#: evidence afterwards is the failure the queue was built to end. The guard
+#: in the extraction path -- `if article_status != "wire"` -- is a different
+#: rule and still stands: it stops some OTHER verdict overriding a wire
+#: detection, and says nothing about a reviewer declaring wire.
+WITHHELD_STATUS: dict[str, str] = {
+    **{kind: UNENRICHED_STATUS.get(kind, kind) for kind in UNENRICHED_TYPES},
+    **UNFETCHED_STATUS,
+}
+
+
 def status_for(note) -> str | None:
     """The status the article should carry, from the reviewer's verdict.
 
@@ -293,6 +321,13 @@ def status_for(note) -> str | None:
     kind, are ordinary stories and take whatever the pipeline's own
     classification gives them. This only overrides where a person named a
     type the pipeline keeps out of enrichment.
+
+    Every withheld kind answers, including the unfetched ones. An article
+    exists for plenty of those -- extracted before the verdict was given,
+    or given a verdict later -- and this is the only function that reads a
+    verdict onto an article. Answering None for them parked the record at
+    `labeled`: refused by enrichment, unreachable by any settle, and
+    outstanding for ever. See WITHHELD_STATUS.
     """
     if not is_readable(note):
         return None
@@ -301,9 +336,7 @@ def status_for(note) -> str | None:
     # Empty is the ordinary story: the pipeline's own classification
     # stands, which is the whole point of not making somebody choose.
     kind = str(note.get("kind") or "").strip()
-    if kind not in UNENRICHED_TYPES:
-        return None
-    return UNENRICHED_STATUS.get(kind, kind)
+    return WITHHELD_STATUS.get(kind)
 
 
 def link_status_for(note) -> str:
