@@ -1,0 +1,124 @@
+name: Land green pin bumps
+
+# The release workflow opens a pin bump in each consumer, waits for that
+# consumer's checks, and lands it. When the checks go red it does the right
+# thing -- "checks failed; left open for a person" -- and exits. What it
+# cannot do is come back.
+#
+# So a bump whose CI was red once and was then fixed sits green with nothing
+# left to land it. v0.14.0 and v0.16.0 both sat that way on 2026-09-13, each
+# because the release introduced a status the consumer's test deliberately
+# requires somebody to admit; the admission was pushed, every check went
+# green, and the pull request stayed open because the release run had
+# finished an hour earlier.
+#
+# This is that retry. It lives HERE rather than in the consumers because
+# this is where CONSUMER_PR_TOKEN is: a repository secret on this
+# repository, not an organisation secret, so a workflow in a consumer
+# cannot read it. A first attempt put this in the crawler using its own
+# GITHUB_TOKEN and the merge was refused --
+#
+#   GraphQL: Repository rule violations found
+#   At least 1 approving review is required by reviewers with write access.
+#
+# -- because the consumer's ruleset grants bypass to OrganizationAdmin and
+# nothing else, and GITHUB_TOKEN is not one.
+
+on:
+  schedule:
+    # Every 30 minutes. A bump that goes green between releases lands
+    # within half an hour instead of waiting for somebody to notice it.
+    - cron: "*/30 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: land-green-pin-bumps
+  cancel-in-progress: false
+
+jobs:
+  land:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # The same consumers the release workflow opens bumps in. Kept as a
+        # matrix so one consumer being unreachable cannot stop the other.
+        repo:
+          - LocalNewsImpact/MizzouNewsCrawler
+          - LocalNewsImpact/datadesk
+    steps:
+      - name: Is there a token?
+        id: token
+        env:
+          TOKEN: ${{ secrets.CONSUMER_PR_TOKEN }}
+        run: |
+          if [ -z "${TOKEN:-}" ]; then
+            echo "::warning::CONSUMER_PR_TOKEN is not set; ${{ matrix.repo }} \
+            bumps cannot be landed automatically"
+            echo "present=no" >> "$GITHUB_OUTPUT"
+          else
+            echo "present=yes" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Land any pin bump whose checks are green
+        if: steps.token.outputs.present == 'yes'
+        env:
+          GH_TOKEN: ${{ secrets.CONSUMER_PR_TOKEN }}
+          REPO: ${{ matrix.repo }}
+        run: |
+          set -euo pipefail
+
+          # Only pin bumps, identified by the branch the release workflow
+          # pushes. The restriction is the branch name rather than the title,
+          # so a retitled pull request cannot widen what this touches.
+          mapfile -t PRS < <(
+            gh pr list --repo "$REPO" --state open --limit 50 \
+              --json number,headRefName \
+              --jq '.[] | select(.headRefName
+                        | startswith("deps/lnic-contracts-")) | .number'
+          )
+
+          if [ ${#PRS[@]} -eq 0 ]; then
+            echo "no open pin bumps in $REPO"
+            exit 0
+          fi
+
+          for PR in "${PRS[@]}"; do
+            echo "::group::$REPO#$PR"
+
+            ROLLUP="$(gh pr view "$PR" --repo "$REPO" --json statusCheckRollup)"
+            TOTAL="$(echo "$ROLLUP" | jq '[.statusCheckRollup[]?] | length')"
+            # A check that has not reported is not a pass. Counting only
+            # failures would land a bump whose test job had not started --
+            # the race the release workflow documents losing on v0.8.0.
+            PENDING="$(echo "$ROLLUP" | jq '[.statusCheckRollup[]?
+              | select(.status != "COMPLETED")] | length')"
+            FAILED="$(echo "$ROLLUP" | jq '[.statusCheckRollup[]?
+              | select(.conclusion != null and .conclusion != "SUCCESS"
+                       and .conclusion != "SKIPPED"
+                       and .conclusion != "NEUTRAL")] | length')"
+
+            if [ "$TOTAL" -eq 0 ]; then
+              echo "no checks reported yet; leaving open"
+            elif [ "$PENDING" -ne 0 ]; then
+              echo "$PENDING check(s) still running; leaving open"
+            elif [ "$FAILED" -ne 0 ]; then
+              echo "$FAILED check(s) failed; leaving open for a person"
+              echo "- ❌ **$REPO** #$PR — $FAILED check(s) failed, left open" \
+                >> "$GITHUB_STEP_SUMMARY"
+            elif gh pr merge "$PR" --repo "$REPO" --squash --admin --delete-branch; then
+              # Green. `--admin` applies the governance the release workflow
+              # applies: wait for green, then land. It refuses rather than
+              # forcing if the branch has moved since the checks ran.
+              echo "- ✅ **$REPO** #$PR — landed by the pin-bump retry" \
+                >> "$GITHUB_STEP_SUMMARY"
+            else
+              echo "::warning::$REPO#$PR was green but would not merge"
+              echo "- ⚠️ **$REPO** #$PR — green but merge refused, left open" \
+                >> "$GITHUB_STEP_SUMMARY"
+            fi
+            echo "::endgroup::"
+          done
