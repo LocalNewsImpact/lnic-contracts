@@ -265,3 +265,46 @@ def test_the_two_sets_still_mean_different_things():
     assert not set(verdict.UNFETCHED_TYPES) & set(verdict.UNENRICHED_TYPES)
     for kind in verdict.UNFETCHED_TYPES:
         assert kind in verdict.UNFETCHED_STATUS, kind
+
+
+# --- a non-English story is kept, not fetched, and countable ---------------------
+
+
+def test_a_non_english_story_is_not_fetched():
+    """It IS a story, and the pipeline cannot read it: the classifier, the
+    CIN codebook and the enrichment prompts are all written for English, so
+    a fetch spends a request and model budget to produce labels nobody
+    should trust. A reviewer who can see the language from the URL has
+    answered more cheaply and more reliably."""
+    note = verdict.build(verdict=verdict.IS_A_STORY, kind="non_english")
+    assert "non_english" in verdict.UNFETCHED_TYPES
+    assert verdict.link_status_for(note) != "article", "never sent to be fetched"
+    assert verdict.status_for(note) is None, "no article is created"
+
+
+def test_it_keeps_a_status_of_its_own_so_it_stays_countable():
+    """The reason it is not folded into an existing status. Inside
+    `not_article` it is indistinguishable from a section front; inside
+    `wire` it is indistinguishable from syndication. Either way "how much of
+    what these publishers write is not in English" stops being answerable,
+    and that is a finding about local news coverage rather than a processing
+    detail."""
+    note = verdict.build(verdict=verdict.IS_A_STORY, kind="non_english")
+    assert verdict.link_status_for(note) == "non_english"
+    assert verdict.link_status_for(note) not in ("not_article", "wire")
+
+
+def test_every_unfetched_kind_has_its_own_declared_status():
+    """A kind in the set with no status resolves to None and the link is
+    written with nothing."""
+    for kind in verdict.UNFETCHED_TYPES:
+        assert kind in verdict.UNFETCHED_STATUS, kind
+        assert verdict.UNFETCHED_STATUS[kind], kind
+
+
+def test_a_non_english_verdict_is_still_a_story_verdict():
+    """The reviewer said it IS a story. That must survive in the note, or
+    the count becomes "not a story, language unknown"."""
+    note = verdict.build(verdict=verdict.IS_A_STORY, kind="non_english")
+    assert note["verdict"] == verdict.IS_A_STORY
+    assert note["kind"] == "non_english"
