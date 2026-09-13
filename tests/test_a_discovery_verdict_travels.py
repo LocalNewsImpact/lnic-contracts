@@ -65,10 +65,16 @@ def test_a_kept_but_unenriched_type_decides_the_status(kind):
     assert verdict.status_for(note) == kind
 
 
-@pytest.mark.parametrize("kind", ["news", "column"])
+@pytest.mark.parametrize("kind", ["news", ""])
 def test_an_ordinary_story_leaves_the_status_alone(kind):
-    """News and columns ARE the ordinary pipeline. Overriding the status
-    for them would stop articles the corpus wants enriched."""
+    """News IS the ordinary pipeline, and so is an unnamed kind.
+    Overriding the status for them would stop articles the corpus wants
+    enriched.
+
+    `column` used to be here, on the grounds that a column is ordinary.
+    It is not: a column is an opinion type, collected and kept and never
+    enriched, and 71 links a reviewer had called columns were on their way
+    to being enriched as news."""
     note = verdict.build(verdict=verdict.IS_A_STORY, kind=kind)
     assert verdict.status_for(note) is None
 
@@ -194,3 +200,68 @@ def test_a_human_verdict_never_returns_a_stage_input():
         assert verdict.link_status_for(note) != "discovered", kind
     for bad in (None, {}, {"verdict": "story"}, "nonsense"):
         assert verdict.link_status_for(bad) != "discovered", bad
+
+
+# --- a column is opinion, and `other` is not an article --------------------------
+
+
+def test_a_column_is_collected_and_never_enriched():
+    """A column is an opinion type: local content the corpus collects and
+    keeps, which receives neither CIN coding nor enrichment. It was
+    described in this module as "the ordinary pipeline", so 71 links a
+    reviewer had called columns were on their way to being enriched as
+    news."""
+    note = verdict.build(verdict=verdict.IS_A_STORY, kind="column")
+    assert verdict.link_status_for(note) == "article", "it is still collected"
+    assert verdict.status_for(note) == "opinion", "and never enriched"
+    assert "column" in verdict.UNENRICHED_TYPES
+
+
+def test_a_column_lands_in_a_status_the_pipeline_already_has():
+    """`column` is not a pipeline status. Writing one would leave articles
+    in a status no stage selects and no report counts. A column IS an
+    opinion type, so it lands where opinion lands, and the kind stays in
+    the verdict for anyone who needs the finer distinction."""
+    note = verdict.build(verdict=verdict.IS_A_STORY, kind="column")
+    assert verdict.status_for(note) != "column"
+    assert note["kind"] == "column", "the distinction is not lost"
+
+
+def test_other_is_not_an_article_and_is_never_fetched():
+    """A reviewer reaching for `other` has found something that is not an
+    article. It used to resolve to `article` -- verification's output --
+    which sent a non-article to be fetched."""
+    note = verdict.build(verdict=verdict.IS_A_STORY, kind="other")
+    assert verdict.link_status_for(note) == "not_article"
+    assert verdict.link_status_for(note) != "article"
+    assert verdict.status_for(note) is None, "no article is created for it"
+    assert "other" in verdict.UNFETCHED_TYPES
+
+
+def test_news_is_the_only_ordinary_story():
+    """Everything else a reviewer can name constrains what happens next.
+    `news`, and an unnamed kind, are the pipeline's to decide."""
+    for kind in ("news", ""):
+        note = verdict.build(verdict=verdict.IS_A_STORY, kind=kind)
+        assert verdict.status_for(note) is None, kind
+        assert verdict.link_status_for(note) == "article", kind
+
+
+def test_every_named_kind_resolves_to_a_status_that_exists():
+    """A kind mapping to a status nothing selects is a record stranded
+    silently. These are the statuses the pipeline actually carries --
+    docs/PIPELINE_STATES.md in the crawler."""
+    link_statuses = {"article", "wire", "not_article", "discovered"}
+    article_statuses = {"obituary", "opinion", "weather", None}
+    for kind in ("news", "column", "other", "obituary", "opinion", "weather", "wire"):
+        note = verdict.build(verdict=verdict.IS_A_STORY, kind=kind)
+        assert verdict.link_status_for(note) in link_statuses, kind
+        assert verdict.status_for(note) in article_statuses, kind
+
+
+def test_the_two_sets_still_mean_different_things():
+    """Unfetched is stronger than unenriched, and no kind is both: one
+    would be fetched and not fetched."""
+    assert not set(verdict.UNFETCHED_TYPES) & set(verdict.UNENRICHED_TYPES)
+    for kind in verdict.UNFETCHED_TYPES:
+        assert kind in verdict.UNFETCHED_STATUS, kind
