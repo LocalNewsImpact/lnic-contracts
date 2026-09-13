@@ -107,6 +107,12 @@ UNENRICHED_STATUS: dict[str, str] = {"column": "opinion"}
 #: body. Fetching one spends a request, an extraction and a wire check to
 #: reach a conclusion a reviewer already reached by reading the URL.
 #:
+#: A non-English story is a story, and the pipeline cannot read it: the
+#: classifier, the CIN codebook and the enrichment prompts are all written
+#: for English, so an extraction spends a fetch and model budget to produce
+#: labels nobody should trust. A reviewer who can see the language from the
+#: URL has answered the question more cheaply and more reliably.
+#:
 #: This is a stronger instruction than UNENRICHED_TYPES. Those are
 #: extracted and kept and merely not enriched; these are not fetched, so
 #: no article row is ever created. A reviewer marking wire in the
@@ -114,15 +120,29 @@ UNENRICHED_STATUS: dict[str, str] = {"column": "opinion"}
 #: the fetch queue -- and the kind was recorded and then ignored, so the
 #: pipeline fetched it, extracted it, and rediscovered by itself what the
 #: person had already said.
-UNFETCHED_TYPES: tuple[str, ...] = ("wire", "other")
+UNFETCHED_TYPES: tuple[str, ...] = ("wire", "other", "non_english")
 
-#: The link status an unfetched kind lands in. `wire` is itself a link
-#: status and means "syndicated, not fetched". `other` is not a story at
-#: all -- a reviewer reaching for it has found something that is not an
-#: article -- so it lands where a rejection lands, and no article is ever
-#: created for it. Resolving it to `article`, as this did, sent a
-#: non-article to be fetched.
-UNFETCHED_STATUS: dict[str, str] = {"wire": "wire", "other": "not_article"}
+#: The link status an unfetched kind lands in.
+#:
+#: `wire` is itself a link status and means "syndicated, not fetched".
+#:
+#: `other` is not a story at all -- a reviewer reaching for it has found
+#: something that is not an article -- so it lands where a rejection lands,
+#: and no article is ever created for it. Resolving it to `article`, as
+#: this did, sent a non-article to be fetched.
+#:
+#: `non_english` IS a story, and it gets a status of its own for the same
+#: reason `wire` does: the corpus needs to be able to count them later. A
+#: non-English story folded into `not_article` is indistinguishable from a
+#: section front, and folded into `wire` it is indistinguishable from
+#: syndication -- either way the question "how much of what these
+#: publishers write is not in English" stops being answerable, and that is
+#: a finding about local news coverage, not a processing detail.
+UNFETCHED_STATUS: dict[str, str] = {
+    "wire": "wire",
+    "other": "not_article",
+    "non_english": "non_english",
+}
 
 #: What the verdict must carry, and why each one:
 #:
