@@ -82,11 +82,23 @@ VERIFIED_STATUS = "article"
 #: keep the article and stop before enrichment -- there is no separate
 #: flag, because the status already means it.
 #:
-#: `news` and `column` are absent deliberately: those ARE the ordinary
-#: pipeline, and an article of that kind should be enriched like any
-#: other. A type here is a story the corpus keeps and does not spend
-#: model budget on.
-UNENRICHED_TYPES: tuple[str, ...] = ("obituary", "opinion", "weather")
+#: `column` is here and `news` is not. A column is an opinion type: local
+#: content the corpus collects and keeps, and which receives neither CIN
+#: coding nor enrichment. It was absent, described as "the ordinary
+#: pipeline", so 71 links a reviewer had called columns were on their way
+#: to being enriched as news.
+#:
+#: `news` is the only ordinary story. A type here is one the corpus keeps
+#: and does not spend model budget on.
+UNENRICHED_TYPES: tuple[str, ...] = ("obituary", "opinion", "weather", "column")
+
+#: The article status an unenriched kind lands in, where it differs from
+#: the kind's own name. `column` is not a pipeline status -- inventing one
+#: would leave a status nothing selects and nothing reports -- and a
+#: column IS an opinion type, so it lands in the status that already means
+#: "kept, not enriched" for opinion. The kind stays in the verdict for
+#: anyone who needs the finer distinction.
+UNENRICHED_STATUS: dict[str, str] = {"column": "opinion"}
 
 #: Types that are stories and should never be fetched at all.
 #:
@@ -102,7 +114,15 @@ UNENRICHED_TYPES: tuple[str, ...] = ("obituary", "opinion", "weather")
 #: the fetch queue -- and the kind was recorded and then ignored, so the
 #: pipeline fetched it, extracted it, and rediscovered by itself what the
 #: person had already said.
-UNFETCHED_TYPES: tuple[str, ...] = ("wire",)
+UNFETCHED_TYPES: tuple[str, ...] = ("wire", "other")
+
+#: The link status an unfetched kind lands in. `wire` is itself a link
+#: status and means "syndicated, not fetched". `other` is not a story at
+#: all -- a reviewer reaching for it has found something that is not an
+#: article -- so it lands where a rejection lands, and no article is ever
+#: created for it. Resolving it to `article`, as this did, sent a
+#: non-article to be fetched.
+UNFETCHED_STATUS: dict[str, str] = {"wire": "wire", "other": "not_article"}
 
 #: What the verdict must carry, and why each one:
 #:
@@ -207,10 +227,10 @@ def read(note) -> dict:
 def status_for(note) -> str | None:
     """The status the article should carry, from the reviewer's verdict.
 
-    None where the verdict does not decide it: `news` and `column` are
-    ordinary stories and take whatever the pipeline's own classification
-    gives them. This only overrides where a person named a type the
-    pipeline keeps out of enrichment.
+    None where the verdict does not decide it: `news`, and an unnamed
+    kind, are ordinary stories and take whatever the pipeline's own
+    classification gives them. This only overrides where a person named a
+    type the pipeline keeps out of enrichment.
     """
     if not is_readable(note):
         return None
@@ -219,7 +239,9 @@ def status_for(note) -> str | None:
     # Empty is the ordinary story: the pipeline's own classification
     # stands, which is the whole point of not making somebody choose.
     kind = str(note.get("kind") or "").strip()
-    return kind if kind in UNENRICHED_TYPES else None
+    if kind not in UNENRICHED_TYPES:
+        return None
+    return UNENRICHED_STATUS.get(kind, kind)
 
 
 def link_status_for(note) -> str:
@@ -245,4 +267,6 @@ def link_status_for(note) -> str:
     if not is_readable(note) or note["verdict"] != IS_A_STORY:
         return VERIFIED_STATUS
     kind = str(note.get("kind") or "").strip()
-    return kind if kind in UNFETCHED_TYPES else VERIFIED_STATUS
+    if kind in UNFETCHED_TYPES:
+        return UNFETCHED_STATUS[kind]
+    return VERIFIED_STATUS
