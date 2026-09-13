@@ -160,17 +160,22 @@ def test_an_ordinary_story_is_verified_not_sent_back_to_verification():
 
 def test_unfetched_and_unenriched_are_different_instructions():
     """Unenriched types are extracted and kept and merely not enriched.
-    Unfetched types are never fetched, so no article row exists. Conflating
-    them would either enrich wire or throw away obituaries."""
+    Unfetched types are never fetched. Conflating them would either enrich
+    wire or throw away obituaries.
+
+    "Never fetched" is a rule about the LINK. It was read as "so no article
+    row exists", and that is false of the record: articles exist for all of
+    these -- extracted before the verdict was given, or given a verdict
+    afterwards. `status_for` answering None for them parked the article at
+    `labeled`, refused by enrichment and unreachable by any settle."""
     assert not set(verdict.UNFETCHED_TYPES) & set(
         verdict.UNENRICHED_TYPES
     )
-    # And each function answers only its own question.
     wire = verdict.build(
         verdict=verdict.IS_A_STORY, kind="wire"
     )
-    assert verdict.status_for(wire) is None, (
-        "wire has no article status: there is no article"
+    assert verdict.status_for(wire) == "wire", (
+        "a reviewer calling something wire means it is wire"
     )
     obituary = verdict.build(
         verdict=verdict.IS_A_STORY, kind="obituary"
@@ -234,7 +239,9 @@ def test_other_is_not_an_article_and_is_never_fetched():
     note = verdict.build(verdict=verdict.IS_A_STORY, kind="other")
     assert verdict.link_status_for(note) == "not_article"
     assert verdict.link_status_for(note) != "article"
-    assert verdict.status_for(note) is None, "no article is created for it"
+    # And where an article already exists for one, it is a non-article too:
+    # the same answer on both sides, rather than a row parked at `labeled`.
+    assert verdict.status_for(note) == "not_article"
     assert "other" in verdict.UNFETCHED_TYPES
 
 
@@ -251,9 +258,26 @@ def test_every_named_kind_resolves_to_a_status_that_exists():
     """A kind mapping to a status nothing selects is a record stranded
     silently. These are the statuses the pipeline actually carries --
     docs/PIPELINE_STATES.md in the crawler."""
-    link_statuses = {"article", "wire", "not_article", "discovered"}
-    article_statuses = {"obituary", "opinion", "weather", None}
-    for kind in ("news", "column", "other", "obituary", "opinion", "weather", "wire"):
+    link_statuses = {"article", "wire", "not_article", "discovered", "non_english"}
+    article_statuses = {
+        "obituary",
+        "opinion",
+        "weather",
+        "wire",
+        "non_english",
+        "not_article",
+        None,
+    }
+    for kind in (
+        "news",
+        "column",
+        "other",
+        "obituary",
+        "opinion",
+        "weather",
+        "wire",
+        "non_english",
+    ):
         note = verdict.build(verdict=verdict.IS_A_STORY, kind=kind)
         assert verdict.link_status_for(note) in link_statuses, kind
         assert verdict.status_for(note) in article_statuses, kind
@@ -279,7 +303,9 @@ def test_a_non_english_story_is_not_fetched():
     note = verdict.build(verdict=verdict.IS_A_STORY, kind="non_english")
     assert "non_english" in verdict.UNFETCHED_TYPES
     assert verdict.link_status_for(note) != "article", "never sent to be fetched"
-    assert verdict.status_for(note) is None, "no article is created"
+    # Where one was fetched before the verdict arrived, the article says so
+    # too, instead of sitting at `labeled` where nothing can reach it.
+    assert verdict.status_for(note) == "non_english"
 
 
 def test_it_keeps_a_status_of_its_own_so_it_stays_countable():
@@ -419,3 +445,88 @@ class TestARejectionIsNotAVerification:
             verdict.link_status_for(None)
             == verdict.VERIFIED_STATUS
         )
+
+
+# ---------------------------------------------------------------------------
+# An article that already exists, and a verdict that arrives for it.
+# ---------------------------------------------------------------------------
+
+
+class TestAVerdictDecidesAnArticleThatAlreadyExists:
+    def _story(self, kind):
+        return {
+            "verdict": verdict.IS_A_STORY,
+            "kind": kind,
+            "decided_at": "2026-09-13T00:00:00+00:00",
+        }
+
+    def test_a_reviewer_calling_it_wire_makes_it_wire(self):
+        """A reviewer calling something wire means it is wire. The queue
+        exists so a person's answer decides; weighing it against the
+        detector's evidence afterwards is the failure the queue was built
+        to end.
+
+        This answered None, so three articles sat at `labeled` -- refused
+        by enrichment, unreachable by any settle, outstanding for ever --
+        and had to be moved by hand."""
+        assert verdict.status_for(self._story("wire")) == "wire"
+
+    def test_every_unfetched_kind_answers_now(self):
+        for kind in verdict.UNFETCHED_TYPES:
+            assert verdict.status_for(self._story(kind)) is not None, kind
+
+    def test_every_withheld_kind_lands_somewhere_terminal(self):
+        """The point is reachability. A status that no stage selects and no
+        settle can close is worse than a wrong one: it is invisible."""
+        parked = {"labeled", "cleaned", "local", "extracted", "discovered"}
+        for kind in verdict.UNENRICHED_TYPES + verdict.UNFETCHED_TYPES:
+            got = verdict.status_for(self._story(kind))
+            assert got is not None, kind
+            assert got not in parked, f"{kind} -> {got} is not terminal"
+
+    def test_the_unenriched_kinds_answer_exactly_what_they_did(self):
+        """Added to, not changed. These four already worked and a
+        regression here would re-enrich obituaries."""
+        assert verdict.status_for(self._story("obituary")) == "obituary"
+        assert verdict.status_for(self._story("opinion")) == "opinion"
+        assert verdict.status_for(self._story("weather")) == "weather"
+        assert verdict.status_for(self._story("column")) == "opinion"
+
+    def test_a_column_still_lands_in_opinion_not_in_a_status_of_its_own(self):
+        """`column` is not a pipeline status. Inventing one would leave a
+        status nothing selects and nothing reports."""
+        assert verdict.status_for(self._story("column")) == "opinion"
+        assert "column" not in verdict.WITHHELD_STATUS.values()
+
+    def test_an_ordinary_story_still_decides_nothing(self):
+        """The commonest verdict. The pipeline classifies it as it would
+        any other, which is the whole point of not making somebody choose a
+        category."""
+        assert verdict.status_for(self._story("news")) is None
+        assert verdict.status_for(self._story("")) is None
+
+    def test_a_rejection_decides_no_article_status(self):
+        """`status_for` answers what an ARTICLE should be. A rejection is
+        answered by `link_status_for`, which is a different question."""
+        assert (
+            verdict.status_for(
+                {
+                    "verdict": verdict.NOT_A_STORY,
+                    "kind": "section_index",
+                    "decided_at": "2026-09-13T00:00:00+00:00",
+                }
+            )
+            is None
+        )
+
+    def test_an_unreadable_note_decides_nothing(self):
+        assert verdict.status_for({}) is None
+        assert verdict.status_for(None) is None
+
+    def test_withheld_status_covers_both_families_and_nothing_else(self):
+        """So a kind added to either tuple is answered here without this
+        mapping being edited, and a kind in neither is never withheld."""
+        assert set(verdict.WITHHELD_STATUS) == set(
+            verdict.UNENRICHED_TYPES + verdict.UNFETCHED_TYPES
+        )
+        assert "news" not in verdict.WITHHELD_STATUS
