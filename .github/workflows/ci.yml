@@ -24,7 +24,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: "3.15"
       # `make check` is lint, tests, and the packaging check: the built
       # package has to carry the code and not only the version number.
       # datadesk's image reported 0.2.0 and carried v0.1.0's code, and

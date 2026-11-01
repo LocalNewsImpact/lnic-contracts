@@ -37,7 +37,7 @@ jobs:
           fetch-depth: 0
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: "3.15"
 
       # The gate the major tag waits behind. Three repositories point at
       # `ci-v1`; moving it to something red breaks all of them at once,
